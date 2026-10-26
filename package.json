@@ -1,0 +1,16 @@
+{
+  "name": "sentinel-instructor-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "ag-grid-react": "*",
+    "dotenv": "*",
+    "express": "*",
+    "react": "*",
+    "react-dom": "*"
+  }
+}
