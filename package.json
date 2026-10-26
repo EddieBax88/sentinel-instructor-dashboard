@@ -2,15 +2,23 @@
   "name": "sentinel-instructor-dashboard",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node server/index.js"
+    "dev": "node --watch server/index.js",
+    "build": "vite build",
+    "start": "NODE_ENV=production node server/index.js",
+    "test": "node --test server/*.test.js"
   },
   "dependencies": {
+    "ag-grid-community": "*",
     "ag-grid-react": "*",
     "dotenv": "*",
     "express": "*",
+    "lucide-react": "*",
     "react": "*",
     "react-dom": "*"
+  },
+  "devDependencies": {
+    "vite": "*"
   }
 }
