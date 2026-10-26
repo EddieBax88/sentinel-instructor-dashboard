@@ -45,7 +45,14 @@ export function isPaypalConfigured() {
 
 async function paypalFetch(path, options = {}) {
   const accessToken = await getAccessToken();
-  const requestBody = options.rawJsonBody ?? (options.body ? JSON.stringify(options.body) : undefined);
+  const requestBody =
+    options.rawJsonBody ??
+    (options.body
+      ? typeof options.body === 'string'
+        ? options.body
+        : JSON.stringify(options.body)
+      : undefined);
+
   const response = await fetch(`${SANDBOX_API}${path}`, {
     ...options,
     body: requestBody,
@@ -58,7 +65,12 @@ async function paypalFetch(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw Object.assign(new Error(payload.message || `PayPal sandbox request failed (${response.status}).`), {
+    let errorMsg = payload.message || `PayPal sandbox request failed (${response.status}).`;
+    if (payload.details && payload.details.length > 0) {
+      const issue = payload.details[0];
+      errorMsg = `${issue.field ? issue.field + ': ' : ''}${issue.issue || issue.description || errorMsg}`;
+    }
+    throw Object.assign(new Error(errorMsg), {
       statusCode: response.status >= 500 ? 502 : response.status,
     });
   }
@@ -105,7 +117,13 @@ export async function createSandboxOrder({ studentName }) {
         custom_id: COHORT_ID,
         invoice_id: `SENTINEL-${randomUUID()}`,
         description: 'One instructor course seat',
-        amount: { currency_code: CURRENCY, value: SEAT_PRICE },
+        amount: {
+          currency_code: CURRENCY,
+          value: SEAT_PRICE,
+          breakdown: {
+            item_total: { currency_code: CURRENCY, value: SEAT_PRICE },
+          },
+        },
         items: [{
           name: 'Course seat',
           description: 'One seat in the Sentinel Fall 2026 cohort',
