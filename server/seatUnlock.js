@@ -15,7 +15,7 @@ export function assertSeatAvailable() {
 }
 
 export function recordPendingOrder(order) {
-  if (!order?.orderId || !order.studentName || !order.amount || !order.currency) {
+  if (!order?.orderId || !order.userId || !order.studentName || !order.amount || !order.currency) {
     throw new Error('Pending orders must include an order, student, and fixed price.');
   }
   if (pendingOrders.has(order.orderId) || transactions.has(order.orderId)) return;
@@ -25,6 +25,10 @@ export function recordPendingOrder(order) {
 
 export function getPendingOrder(orderId) {
   return pendingOrders.get(orderId);
+}
+
+export function discardPendingOrder(orderId) {
+  pendingOrders.delete(orderId);
 }
 
 export function findTransactionByOrderId(orderId) {
@@ -50,6 +54,7 @@ export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amo
   const transaction = {
     orderId,
     captureId,
+    userId: order.userId,
     studentName: order.studentName,
     cohortId: order.cohortId,
     amount,

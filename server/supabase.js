@@ -1,0 +1,119 @@
+function supabaseConfiguration() {
+  const { SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw Object.assign(new Error('Set SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY.'), { statusCode: 503 });
+  }
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(SUPABASE_URL);
+  } catch {
+    throw Object.assign(new Error('SUPABASE_URL must be a valid URL.'), { statusCode: 503 });
+  }
+
+  return { baseUrl: baseUrl.toString().replace(/\/$/, ''), anonKey: SUPABASE_ANON_KEY, serviceRoleKey: SUPABASE_SERVICE_ROLE_KEY };
+}
+
+export function isSupabaseConfigured() {
+  try {
+    supabaseConfiguration();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function serviceHeaders(serviceRoleKey, extra = {}) {
+  return {
+    apikey: serviceRoleKey,
+    Authorization: `Bearer ${serviceRoleKey}`,
+    'Content-Type': 'application/json',
+    ...extra,
+  };
+}
+
+async function readJson(response) {
+  return response.json().catch(() => ({}));
+}
+
+export async function authenticateSupabaseUser(accessToken) {
+  if (!accessToken) {
+    throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
+  }
+
+  const { baseUrl, anonKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+    },
+  });
+  const user = await readJson(response);
+  if (!response.ok || typeof user.id !== 'string') {
+    throw Object.assign(new Error('The Supabase access token is invalid or expired.'), { statusCode: 401 });
+  }
+
+  return { id: user.id };
+}
+
+export async function savePaypalOrder({ orderId, userId, studentName, amount, currency }) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_orders`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
+    body: JSON.stringify({
+      paypal_order_id: orderId,
+      user_id: userId,
+      student_name: studentName,
+      amount,
+      currency,
+      status: 'PENDING',
+    }),
+  });
+
+  if (!response.ok) {
+    await readJson(response);
+    throw Object.assign(new Error(`Could not persist the PayPal order in Supabase (${response.status}).`), { statusCode: 502 });
+  }
+}
+
+export async function getPaypalOrder(orderId) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({
+    select: 'paypal_order_id,user_id,student_name,amount,currency,status',
+    paypal_order_id: `eq.${orderId}`,
+    limit: '1',
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_orders?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok) {
+    throw Object.assign(new Error(`Could not read the PayPal order from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  if (!Array.isArray(rows) || !rows[0]) {
+    throw Object.assign(new Error('No Sentinel Learning account is associated with this PayPal order.'), { statusCode: 503 });
+  }
+  return rows[0];
+}
+
+export async function grantSentinelVoltAccess({ userId, orderId, captureId, status, amount, currency }) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/rpc/grant_sentinel_volt_access`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
+    body: JSON.stringify({
+      p_user_id: userId,
+      p_order_id: orderId,
+      p_capture_id: captureId,
+      p_status: status,
+      p_amount: amount,
+      p_currency: currency,
+    }),
+  });
+  if (!response.ok) {
+    await readJson(response);
+    throw Object.assign(new Error(`Supabase could not grant Sentinel Volt access (${response.status}).`), { statusCode: 502 });
+  }
+}

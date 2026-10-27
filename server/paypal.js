@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import {
   assertSeatAvailable,
+  discardPendingOrder,
   findTransactionByOrderId,
   getPendingOrder,
   recordPendingOrder,
   unlockSeatsFromVerifiedCapture,
 } from './seatUnlock.js';
+import { getPaypalOrder, grantSentinelVoltAccess, savePaypalOrder } from './supabase.js';
 
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
@@ -99,10 +101,13 @@ async function getAccessToken() {
   return tokenCache.value;
 }
 
-export async function createSandboxOrder({ studentName }) {
+export async function createSandboxOrder({ studentName, userId }) {
   const normalizedName = typeof studentName === 'string' ? studentName.trim().slice(0, 80) : '';
   if (!normalizedName) {
     throw Object.assign(new Error('Enter a student name before starting checkout.'), { statusCode: 400 });
+  }
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required to start checkout.'), { statusCode: 401 });
   }
   assertSeatAvailable();
 
@@ -114,7 +119,7 @@ export async function createSandboxOrder({ studentName }) {
       intent: 'CAPTURE',
       purchase_units: [{
         reference_id: COHORT_ID,
-        custom_id: COHORT_ID,
+        custom_id: userId,
         invoice_id: `SENTINEL-${randomUUID()}`,
         description: 'One instructor course seat',
         amount: {
@@ -158,23 +163,47 @@ export async function createSandboxOrder({ studentName }) {
     throw Object.assign(new Error('PayPal returned a non-sandbox approval URL; checkout was stopped.'), { statusCode: 502 });
   }
 
-  recordPendingOrder({
+  const pendingOrder = {
     orderId: order.id,
+    userId,
     studentName: normalizedName,
     cohortId: COHORT_ID,
     amount: SEAT_PRICE,
     currency: CURRENCY,
-  });
+  };
+  recordPendingOrder(pendingOrder);
+  try {
+    await savePaypalOrder(pendingOrder);
+  } catch (error) {
+    discardPendingOrder(order.id);
+    throw error;
+  }
   return { orderId: order.id, approvalUrl: approvalUrl.toString() };
 }
 
-export async function captureSandboxOrder(orderId) {
+export async function captureSandboxOrder(orderId, userId) {
   const existing = findTransactionByOrderId(orderId);
-  if (existing) return { transaction: existing, alreadyCaptured: true };
+  if (existing) {
+    if (existing.userId !== userId) {
+      throw Object.assign(new Error('This PayPal order does not belong to the authenticated account.'), { statusCode: 403 });
+    }
+    await grantSentinelVoltAccess({
+      userId: existing.userId,
+      orderId,
+      captureId: existing.captureId,
+      status: existing.status,
+      amount: existing.amount,
+      currency: existing.currency,
+    });
+    return { transaction: existing, alreadyCaptured: true };
+  }
 
   const pendingOrder = getPendingOrder(orderId);
   if (!pendingOrder) {
     throw Object.assign(new Error('No pending Sentinel seat order matches this PayPal order.'), { statusCode: 404 });
+  }
+  if (pendingOrder.userId !== userId) {
+    throw Object.assign(new Error('This PayPal order does not belong to the authenticated account.'), { statusCode: 403 });
   }
 
   const captureResponse = await paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
@@ -182,20 +211,22 @@ export async function captureSandboxOrder(orderId) {
     headers: { 'PayPal-Request-Id': randomUUID(), Prefer: 'return=representation' },
     body: JSON.stringify({}),
   });
-  const capture = captureResponse.purchase_units?.flatMap((unit) => unit.payments?.captures || [])
+  const completedCapture = captureResponse.purchase_units?.flatMap((unit) => unit.payments?.captures || [])
     .find((item) => item.status === 'COMPLETED');
-  if (captureResponse.status !== 'COMPLETED' || !capture) {
+  if (captureResponse.status !== 'COMPLETED' || !completedCapture) {
     throw Object.assign(new Error('PayPal has not confirmed a completed capture; no seat was unlocked.'), { statusCode: 409 });
   }
 
-  const transaction = unlockSeatsFromVerifiedCapture({
+  const capture = {
     orderId,
-    captureId: capture.id,
-    status: capture.status,
-    amount: capture.amount?.value,
-    currency: capture.amount?.currency_code,
+    captureId: completedCapture.id,
+    status: completedCapture.status,
+    amount: completedCapture.amount?.value,
+    currency: completedCapture.amount?.currency_code,
     source: 'orders-api',
-  });
+  };
+  const transaction = unlockSeatsFromVerifiedCapture(capture);
+  await grantSentinelVoltAccess({ userId: pendingOrder.userId, ...capture });
   return { transaction, alreadyCaptured: false };
 }
 
@@ -204,6 +235,7 @@ export async function verifySandboxWebhook(event, headers, rawBody) {
   if (!webhookId || webhookId.startsWith('your_')) {
     throw Object.assign(new Error('Set PAYPAL_WEBHOOK_ID to verify PayPal webhook events.'), { statusCode: 503 });
   }
+  if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) return false;
   const requiredHeaders = {
     auth_algo: headers['paypal-auth-algo'],
     cert_url: headers['paypal-cert-url'],
@@ -214,7 +246,7 @@ export async function verifySandboxWebhook(event, headers, rawBody) {
   if (Object.values(requiredHeaders).some((value) => !value)) return false;
 
   const verificationMetadata = JSON.stringify({ ...requiredHeaders, webhook_id: webhookId });
-  const rawEvent = rawBody?.toString('utf8') || JSON.stringify(event);
+  const rawEvent = rawBody.toString('utf8');
   const verification = await paypalFetch('/v1/notifications/verify-webhook-signature', {
     method: 'POST',
     rawJsonBody: `${verificationMetadata.slice(0, -1)},"webhook_event":${rawEvent}}`,

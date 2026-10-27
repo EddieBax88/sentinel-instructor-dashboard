@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
+import { authenticateSupabaseUser, isSupabaseConfigured } from './supabase.js';
 import webhookRouter from './webhook.js';
 import { getDashboardState } from './seatUnlock.js';
 
@@ -12,6 +13,14 @@ const projectDirectory = path.resolve(currentDirectory, '..');
 const clientBuildDirectory = path.join(projectDirectory, 'dist');
 const app = express();
 
+function getBearerToken(authorization) {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization || '');
+  if (!match) {
+    throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
+  }
+  return match[1];
+}
+
 app.disable('x-powered-by');
 app.use(express.json({
   verify: (request, _response, buffer) => {
@@ -19,12 +28,13 @@ app.use(express.json({
   },
 }));
 app.get('/api/dashboard', (_request, response) => {
-  response.json({ ...getDashboardState(), paymentAvailable: isPaypalConfigured() });
+  response.json({ ...getDashboardState(), paymentAvailable: isPaypalConfigured() && isSupabaseConfigured() });
 });
 
 app.post('/api/paypal/orders', async (request, response) => {
   try {
-    const order = await createSandboxOrder({ studentName: request.body?.studentName });
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    const order = await createSandboxOrder({ studentName: request.body?.studentName, userId: user.id });
     response.status(201).json(order);
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
@@ -33,7 +43,8 @@ app.post('/api/paypal/orders', async (request, response) => {
 
 app.post('/api/paypal/orders/:orderId/capture', async (request, response) => {
   try {
-    response.json(await captureSandboxOrder(request.params.orderId));
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    response.json(await captureSandboxOrder(request.params.orderId, user.id));
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
   }

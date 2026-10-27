@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifySandboxWebhook } from './paypal.js';
-import { unlockSeatsFromVerifiedCapture } from './seatUnlock.js';
+import { getPendingOrder, unlockSeatsFromVerifiedCapture } from './seatUnlock.js';
+import { getPaypalOrder, grantSentinelVoltAccess } from './supabase.js';
 
 const router = Router();
 
@@ -13,20 +14,32 @@ router.post('/', async (request, response) => {
     if (event.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
       const resource = event.resource || {};
       const orderId = resource.supplementary_data?.related_ids?.order_id;
-      const transaction = unlockSeatsFromVerifiedCapture({
+      const capture = {
         orderId,
         captureId: resource.id,
         status: resource.status,
         amount: resource.amount?.value,
         currency: resource.amount?.currency_code,
-        source: 'verified-webhook',
-      });
-      return response.json({ received: true, unlocked: true, transactionId: transaction.captureId });
+      };
+      if (!orderId || !capture.captureId || capture.status !== 'COMPLETED') {
+        return response.status(400).json({ error: 'The verified PayPal event is missing a completed capture or order ID.' });
+      }
+
+      const order = await getPaypalOrder(orderId);
+      const pendingOrder = getPendingOrder(orderId);
+      if (pendingOrder) {
+        if (pendingOrder.userId !== order.user_id) {
+          throw Object.assign(new Error('PayPal order account association does not match the stored account.'), { statusCode: 409 });
+        }
+        unlockSeatsFromVerifiedCapture({ ...capture, source: 'verified-webhook' });
+      }
+      await grantSentinelVoltAccess({ userId: order.user_id, ...capture });
+      return response.json({ received: true, unlocked: true, transactionId: capture.captureId });
     }
 
     return response.json({ received: true, unlocked: false });
   } catch (error) {
-    return response.status(error.statusCode || 400).json({ error: error.message });
+    return response.status(error.statusCode || 503).json({ error: error.message });
   }
 });
 

@@ -1,0 +1,119 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  authenticateSupabaseUser,
+  getPaypalOrder,
+  grantSentinelVoltAccess,
+  savePaypalOrder,
+} from './supabase.js';
+
+const originalFetch = globalThis.fetch;
+const originalEnvironment = {
+  url: process.env.SUPABASE_URL,
+  anonKey: process.env.SUPABASE_ANON_KEY,
+  serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+};
+
+test.beforeEach(() => {
+  process.env.SUPABASE_URL = 'https://example.supabase.co';
+  process.env.SUPABASE_ANON_KEY = 'test-anon-key';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
+});
+
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+  if (originalEnvironment.url === undefined) delete process.env.SUPABASE_URL;
+  else process.env.SUPABASE_URL = originalEnvironment.url;
+  if (originalEnvironment.anonKey === undefined) delete process.env.SUPABASE_ANON_KEY;
+  else process.env.SUPABASE_ANON_KEY = originalEnvironment.anonKey;
+  if (originalEnvironment.serviceRoleKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  else process.env.SUPABASE_SERVICE_ROLE_KEY = originalEnvironment.serviceRoleKey;
+});
+
+test('validates the access token with Supabase Auth and returns only the account id', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, 'https://example.supabase.co/auth/v1/user');
+    assert.equal(options.headers.Authorization, 'Bearer signed-user-token');
+    assert.equal(options.headers.apikey, 'test-anon-key');
+    return Response.json({ id: 'user-123', email: 'private@example.test' });
+  };
+
+  assert.deepEqual(await authenticateSupabaseUser('signed-user-token'), { id: 'user-123' });
+});
+
+test('does not accept an invalid Supabase access token', async () => {
+  globalThis.fetch = async () => Response.json({ message: 'invalid' }, { status: 401 });
+  await assert.rejects(authenticateSupabaseUser('expired-token'), {
+    message: 'The Supabase access token is invalid or expired.',
+    statusCode: 401,
+  });
+});
+
+test('persists account association for a created PayPal order', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, 'https://example.supabase.co/rest/v1/paypal_orders');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.Authorization, 'Bearer test-service-role-key');
+    assert.deepEqual(JSON.parse(options.body), {
+      paypal_order_id: 'ORDER-1',
+      user_id: 'user-123',
+      student_name: 'Avery',
+      amount: '49.00',
+      currency: 'USD',
+      status: 'PENDING',
+    });
+    return new Response(null, { status: 201 });
+  };
+
+  await savePaypalOrder({
+    orderId: 'ORDER-1',
+    userId: 'user-123',
+    studentName: 'Avery',
+    amount: '49.00',
+    currency: 'USD',
+  });
+});
+
+test('reads the durable user association by PayPal order id', async () => {
+  globalThis.fetch = async (url) => {
+    const requestUrl = new URL(url);
+    assert.equal(requestUrl.pathname, '/rest/v1/paypal_orders');
+    assert.equal(requestUrl.searchParams.get('paypal_order_id'), 'eq.ORDER-1');
+    return Response.json([{
+      paypal_order_id: 'ORDER-1',
+      user_id: 'user-123',
+      student_name: 'Avery',
+      amount: '49.00',
+      currency: 'USD',
+      status: 'PENDING',
+    }]);
+  };
+
+  assert.equal((await getPaypalOrder('ORDER-1')).user_id, 'user-123');
+});
+
+test('calls the atomic Sentinel Volt entitlement grant function', async () => {
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, 'https://example.supabase.co/rest/v1/rpc/grant_sentinel_volt_access');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.Authorization, 'Bearer test-service-role-key');
+    assert.deepEqual(JSON.parse(options.body), {
+      p_user_id: 'user-123',
+      p_order_id: 'ORDER-1',
+      p_capture_id: 'CAPTURE-1',
+      p_status: 'COMPLETED',
+      p_amount: '49.00',
+      p_currency: 'USD',
+    });
+    return new Response(null, { status: 204 });
+  };
+
+  await grantSentinelVoltAccess({
+    userId: 'user-123',
+    orderId: 'ORDER-1',
+    captureId: 'CAPTURE-1',
+    status: 'COMPLETED',
+    amount: '49.00',
+    currency: 'USD',
+  });
+});
