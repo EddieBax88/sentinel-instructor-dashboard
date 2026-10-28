@@ -23,10 +23,20 @@ export function isSupabaseConfigured() {
   }
 }
 
+export function publicSupabaseConfiguration() {
+  const { baseUrl, anonKey } = supabaseConfiguration();
+  if (anonKey.startsWith('sb_secret_')) {
+    throw Object.assign(new Error('SUPABASE_ANON_KEY must be a publishable key, not a secret key.'), { statusCode: 503 });
+  }
+  return { url: baseUrl, publishableKey: anonKey };
+}
+
+// sb_secret_ keys are not JWTs: Supabase accepts them only on the apikey header.
+// Legacy service_role JWTs still need the matching Bearer header.
 function serviceHeaders(serviceRoleKey, extra = {}) {
   return {
     apikey: serviceRoleKey,
-    Authorization: `Bearer ${serviceRoleKey}`,
+    ...(serviceRoleKey.startsWith('sb_secret_') ? {} : { Authorization: `Bearer ${serviceRoleKey}` }),
     'Content-Type': 'application/json',
     ...extra,
   };

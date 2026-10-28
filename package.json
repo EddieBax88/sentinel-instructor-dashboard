@@ -10,6 +10,7 @@
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "ag-grid-community": "*",
     "ag-grid-react": "*",
     "dotenv": "*",

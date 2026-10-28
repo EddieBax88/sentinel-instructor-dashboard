@@ -4,6 +4,7 @@ import {
   authenticateSupabaseUser,
   getPaypalOrder,
   grantSentinelVoltAccess,
+  publicSupabaseConfiguration,
   savePaypalOrder,
 } from './supabase.js';
 
@@ -116,4 +117,27 @@ test('calls the atomic Sentinel Volt entitlement grant function', async () => {
     amount: '49.00',
     currency: 'USD',
   });
+});
+
+test('sends sb_secret_ keys only on the apikey header', async () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers.apikey, 'sb_secret_test');
+    assert.equal(options.headers.Authorization, undefined);
+    return new Response(null, { status: 201 });
+  };
+
+  await savePaypalOrder({
+    orderId: 'ORDER-1',
+    userId: 'user-123',
+    studentName: 'Avery',
+    amount: '49.00',
+    currency: 'USD',
+  });
+});
+
+test('exposes only the URL and publishable key to the browser', () => {
+  assert.deepEqual(publicSupabaseConfiguration(), { url: 'https://example.supabase.co', publishableKey: 'test-anon-key' });
+  process.env.SUPABASE_ANON_KEY = 'sb_secret_test';
+  assert.throws(() => publicSupabaseConfiguration(), { statusCode: 503 });
 });

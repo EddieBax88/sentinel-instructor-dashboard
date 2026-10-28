@@ -1,4 +1,5 @@
 import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
 import NecDemo from './components/NecDemo.jsx';
 import SeatTable from './components/SeatTable.jsx';
@@ -14,6 +15,10 @@ export default function App() {
   const [studentName, setStudentName] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [supabase, setSupabase] = useState(null);
+  const [session, setSession] = useState(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const processedOrder = useRef('');
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
   const cancelledCheckout = new URLSearchParams(window.location.search).get('checkout') === 'cancelled';
@@ -37,12 +42,45 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!orderFromReturn || processedOrder.current === orderFromReturn) return;
+    let subscription;
+    fetch('/api/supabase-config')
+      .then(readResponse)
+      .then(async ({ url, publishableKey }) => {
+        const client = createClient(url, publishableKey);
+        setSupabase(client);
+        setSession((await client.auth.getSession()).data.session);
+        subscription = client.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)).data.subscription;
+      })
+      .catch((error) => setNotice(error.message));
+    return () => subscription?.unsubscribe();
+  }, []);
+
+  function authHeaders() {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+
+  async function signIn(event) {
+    event.preventDefault();
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setNotice(error ? error.message : 'Signed in.');
+    setBusy(false);
+  }
+
+  async function signUp() {
+    setBusy(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    setNotice(error ? error.message : data.session ? 'Account created and signed in.' : 'Check your email to confirm the account, then sign in.');
+    setBusy(false);
+  }
+
+  useEffect(() => {
+    if (!orderFromReturn || !session || processedOrder.current === orderFromReturn) return;
     processedOrder.current = orderFromReturn;
     let active = true;
     setBusy(true);
     setNotice('PayPal approved the order. Confirming capture…');
-    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST' })
+    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST', headers: authHeaders() })
       .then(readResponse)
       .then(async ({ transaction }) => {
         if (!active) return;
@@ -53,7 +91,7 @@ export default function App() {
       .catch((error) => active && setNotice(error.message))
       .finally(() => active && setBusy(false));
     return () => { active = false; };
-  }, [orderFromReturn]);
+  }, [orderFromReturn, session]);
 
   useEffect(() => {
     if (cancelledCheckout) setNotice('Checkout was cancelled. No seat was changed.');
@@ -66,7 +104,7 @@ export default function App() {
     try {
       const order = await readResponse(await fetch('/api/paypal/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ studentName }),
       }));
       window.location.assign(order.approvalUrl);
@@ -108,6 +146,16 @@ export default function App() {
 
         <section className="checkout-band" aria-label="Sandbox seat checkout">
           <div className="checkout-copy"><span className="checkout-marker">01</span><div><strong>Unlock one cohort seat</strong><span>$49.00 USD · sandbox checkout · capture on approval</span></div></div>
+          {!session ? (
+          <form className="checkout-form" onSubmit={signIn}>
+            <label className="sr-only" htmlFor="account-email">Email</label>
+            <input id="account-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" autoComplete="email" required />
+            <label className="sr-only" htmlFor="account-password">Password</label>
+            <input id="account-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" autoComplete="current-password" minLength="6" required />
+            <button className="checkout-button" type="submit" disabled={busy || !supabase}>Sign in</button>
+            <button className="checkout-button" type="button" onClick={signUp} disabled={busy || !supabase || !email || password.length < 6}>Create account</button>
+          </form>
+          ) : (
           <form className="checkout-form" onSubmit={beginCheckout}>
             <label className="sr-only" htmlFor="student-name">Student name</label>
             <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student name" maxLength="80" required />
@@ -116,6 +164,7 @@ export default function App() {
               <ArrowUpRight size={16} />
             </button>
           </form>
+          )}
         </section>
         {notice && <p className="notice" role="status">{notice}</p>}
 

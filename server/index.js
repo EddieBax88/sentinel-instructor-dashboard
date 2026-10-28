@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
-import { authenticateSupabaseUser, isSupabaseConfigured } from './supabase.js';
+import { authenticateSupabaseUser, isSupabaseConfigured, publicSupabaseConfiguration } from './supabase.js';
 import webhookRouter from './webhook.js';
 import { getDashboardState } from './seatUnlock.js';
 
@@ -29,6 +29,14 @@ app.use(express.json({
 }));
 app.get('/api/dashboard', (_request, response) => {
   response.json({ ...getDashboardState(), paymentAvailable: isPaypalConfigured() && isSupabaseConfigured() });
+});
+
+app.get('/api/supabase-config', (_request, response) => {
+  try {
+    response.json(publicSupabaseConfiguration());
+  } catch (error) {
+    response.status(error.statusCode || 503).json({ error: error.message });
+  }
 });
 
 app.post('/api/paypal/orders', async (request, response) => {
