@@ -1,6 +1,15 @@
 import { Bot, Check, X } from 'lucide-react';
 import { useState } from 'react';
 
+// Renders **bold** spans as <strong>; React escapes the text, and stray asterisks are dropped.
+function formatReply(text) {
+  return text.split(/(\*\*[^*\n]+\*\*)/g).map((part, index) => (
+    /^\*\*[^*\n]+\*\*$/.test(part)
+      ? <strong key={index}>{part.slice(2, -2)}</strong>
+      : part.replaceAll('**', '')
+  ));
+}
+
 async function readResponse(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'The request could not be completed.');
@@ -60,7 +69,7 @@ export default function AgentPanel({ authHeaders, available }) {
       <div className="agent-heading"><Bot size={16} /><strong>Seat assistant</strong><span>Ask in plain English, e.g. "Buy 12 seats for my fall class."</span></div>
       {messages.length > 0 && (
         <ol className="agent-log">
-          {messages.map((message, index) => <li key={index} className={`agent-message ${message.role}`}>{message.content}</li>)}
+          {messages.map((message, index) => <li key={index} className={`agent-message ${message.role}`}>{message.role === 'assistant' ? formatReply(message.content) : message.content}</li>)}
         </ol>
       )}
       {proposal && (

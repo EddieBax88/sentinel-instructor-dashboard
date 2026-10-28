@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
+import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, replyText, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
 import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
 import { getDashboardState, recordPendingOrder, resetSeatState } from './seatUnlock.js';
 
@@ -294,4 +294,30 @@ test('expired proposals cannot be confirmed', async () => {
     Date.now = realNow;
   }
   assert.equal(paypalRequests.length, 0);
+});
+
+test('strips leaked reasoning that ends with </think> from the reply', async () => {
+  const leaked = '...Let me provide that information.</think>Your order for 30 seats...';
+  const client = scriptedClient([textReply(leaked)]);
+
+  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 30 seats for my fall class.' }], client });
+
+  assert.equal(reply, 'Your order for 30 seats...');
+  assert.ok(!reply.includes('Let me provide'));
+  assert.ok(!reply.includes('think'));
+});
+
+test('removes think blocks and unclosed reasoning, and never returns separate reasoning fields', async () => {
+  assert.equal(replyText('<think>Plan the answer.</think>\n12 seats cost USD 588.00.'), '12 seats cost USD 588.00.');
+  assert.equal(replyText('12 seats cost USD 588.00.<think>still thinking'), '12 seats cost USD 588.00.');
+  assert.equal(replyText('Reasoning one.</think>Reasoning two.</THINK>Final answer.'), 'Final answer.');
+  assert.equal(replyText(null), '');
+
+  const client = scriptedClient([completion({ content: 'Seats are USD 49.00 each.', reasoning_content: 'SECRET reasoning', reasoning: 'SECRET too' }, 'stop')]);
+  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client });
+  assert.equal(reply, 'Seats are USD 49.00 each.');
+
+  const onlyReasoning = scriptedClient([textReply('I should check pricing first.</think>')]);
+  const fallback = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client: onlyReasoning });
+  assert.ok(!fallback.reply.includes('pricing first'));
 });
