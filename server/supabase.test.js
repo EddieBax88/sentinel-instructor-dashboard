@@ -4,6 +4,7 @@ import {
   authenticateSupabaseUser,
   getPaypalOrder,
   grantSentinelVoltAccess,
+  listPaypalOrdersForUser,
   publicSupabaseConfiguration,
   savePaypalOrder,
 } from './supabase.js';
@@ -141,4 +142,28 @@ test('exposes only the URL and publishable key to the browser', () => {
   assert.deepEqual(publicSupabaseConfiguration(), { url: 'https://example.supabase.co', publishableKey: 'test-anon-key' });
   process.env.SUPABASE_ANON_KEY = 'sb_secret_test';
   assert.throws(() => publicSupabaseConfiguration(), { statusCode: 503 });
+});
+
+test("reads only the verified user's orders, with the secret key on the server", async () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';
+  globalThis.fetch = async (url, options) => {
+    const requestUrl = new URL(url);
+    assert.equal(requestUrl.pathname, '/rest/v1/paypal_orders');
+    assert.equal(requestUrl.searchParams.get('user_id'), 'eq.user-123');
+    assert.match(requestUrl.searchParams.get('select'), /quantity/);
+    assert.match(requestUrl.searchParams.get('select'), /paypal_payments\(capture_id/);
+    assert.equal(options.headers.apikey, 'sb_secret_test');
+    return Response.json([{ paypal_order_id: 'ORDER-1', quantity: 30, amount: 1470, status: 'PENDING' }]);
+  };
+
+  const rows = await listPaypalOrdersForUser('user-123');
+  assert.equal(rows[0].quantity, 30);
+});
+
+test('refuses to list orders without a verified user id and surfaces Supabase errors', async () => {
+  globalThis.fetch = async () => { throw new Error('Unexpected request'); };
+  await assert.rejects(listPaypalOrdersForUser(undefined), { statusCode: 401 });
+
+  globalThis.fetch = async () => Response.json({ message: 'permission denied' }, { status: 401 });
+  await assert.rejects(listPaypalOrdersForUser('user-123'), { statusCode: 502 });
 });

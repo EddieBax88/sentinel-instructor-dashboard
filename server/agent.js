@@ -2,8 +2,8 @@ import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { AGENT_BASE_URL, AGENT_MODEL, MAX_SEATS_PER_ORDER } from './config.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
-import { COHORT, getOrdersForUser, seatsRemaining } from './seatUnlock.js';
-import { logAgentAction } from './supabase.js';
+import { COHORT, dashboardFromOrders } from './seatUnlock.js';
+import { listPaypalOrdersForUser, logAgentAction } from './supabase.js';
 
 const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
@@ -83,12 +83,16 @@ export async function executeTool(name, input, { userId }) {
     return { result: { ...SEAT_PRICING, maxSeatsPerOrder: MAX_SEATS_PER_ORDER } };
   }
   if (name === 'get_current_seats') {
+    const ledger = dashboardFromOrders(await listPaypalOrdersForUser(userId));
+    const [quota] = ledger.quotas;
     return {
       result: {
         cohort: COHORT.name,
-        defaultClassSize: COHORT.classSize,
-        seatsRemaining: seatsRemaining(),
-        yourOrders: getOrdersForUser(userId),
+        defaultClassSize: quota.classSize,
+        seatsSold: quota.seatsSold,
+        seatsPending: quota.seatsReserved,
+        seatsRemaining: quota.seatsRemaining,
+        yourOrders: ledger.transactions.map(({ orderId, studentName, quantity, amount, currency, status }) => ({ orderId, name: studentName, quantity, amount, currency, status })),
       },
     };
   }

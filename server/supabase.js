@@ -109,6 +109,28 @@ export async function getPaypalOrder(orderId) {
   return rows[0];
 }
 
+// Reads only the verified user's orders: userId always comes from authenticateSupabaseUser.
+export async function listPaypalOrdersForUser(userId) {
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required.'), { statusCode: 401 });
+  }
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({
+    select: 'paypal_order_id,student_name,quantity,amount,currency,status,created_at,paypal_payments(capture_id,created_at)',
+    user_id: `eq.${userId}`,
+    order: 'created_at.desc',
+    limit: '500',
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_orders?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read seat orders from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  return rows;
+}
+
 export async function grantSentinelVoltAccess({ userId, orderId, captureId, status, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
   const response = await fetch(`${baseUrl}/rest/v1/rpc/grant_sentinel_volt_access`, {

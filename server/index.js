@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
-import { authenticateSupabaseUser, isSupabaseConfigured, publicSupabaseConfiguration } from './supabase.js';
+import { authenticateSupabaseUser, isSupabaseConfigured, listPaypalOrdersForUser, publicSupabaseConfiguration } from './supabase.js';
 import webhookRouter from './webhook.js';
-import { getDashboardState } from './seatUnlock.js';
+import { dashboardFromOrders } from './seatUnlock.js';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(currentDirectory, '..');
@@ -30,7 +30,17 @@ app.use(express.json({
 }));
 app.get('/api/dashboard', (_request, response) => {
   const paymentAvailable = isPaypalConfigured() && isSupabaseConfigured();
-  response.json({ ...getDashboardState(), paymentAvailable, agentAvailable: paymentAvailable && isAgentConfigured() });
+  response.json({ paymentAvailable, agentAvailable: paymentAvailable && isAgentConfigured() });
+});
+
+// The ledger is per instructor: the user ID comes only from the verified access token.
+app.get('/api/ledger', async (request, response) => {
+  try {
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    response.json(dashboardFromOrders(await listPaypalOrdersForUser(user.id)));
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
 });
 
 app.get('/api/supabase-config', (_request, response) => {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  dashboardFromOrders,
   getDashboardState,
   recordPendingOrder,
   resetSeatState,
@@ -59,4 +60,34 @@ test('counts multi-seat orders by quantity with no class-size cap', () => {
   });
   assert.equal(getDashboardState().quotas[0].seatsSold, 25);
   assert.equal(getDashboardState().quotas[0].seatsReserved, 10);
+});
+
+test('builds the ledger from Supabase rows so a server restart cannot hide orders', () => {
+  // The live bug: the order existed in Supabase but the dashboard read an empty in-memory ledger.
+  recordPendingOrder({ orderId: 'ORDER-MEM', userId: 'USER-1', studentName: 'Old', cohortId: 'cohort', amount: '49.00', currency: 'USD' });
+  resetSeatState();
+
+  const ledger = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-30', student_name: 'Fall class', quantity: 30, amount: 1470, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T18:00:00Z', paypal_payments: [] },
+    { paypal_order_id: 'ORDER-2', student_name: 'Spring class', quantity: 2, amount: '98.00', currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-2', created_at: '2026-10-27T18:05:00Z' }] },
+  ]);
+
+  assert.equal(ledger.transactions.length, 2);
+  assert.deepEqual(ledger.transactions[0], {
+    orderId: 'ORDER-30', studentName: 'Fall class', cohortId: 'sentinel-fall-2026', quantity: 30, amount: '1470.00', currency: 'USD',
+    captureId: '', status: 'AWAITING PAYMENT', createdAt: '2026-10-28T18:00:00Z', unlockedAt: undefined,
+  });
+  assert.equal(ledger.transactions[1].captureId, 'CAP-2');
+  assert.equal(ledger.quotas[0].seatsReserved, 30);
+  assert.equal(ledger.quotas[0].seatsSold, 2);
+  assert.equal(ledger.quotas[0].seatsRemaining, 0);
+  assert.deepEqual(ledger.students.map((student) => student.readiness), ['Payment pending', 'Seat unlocked']);
+  assert.equal(getDashboardState().transactions.length, 0);
+});
+
+test('an instructor with no orders gets an empty ledger', () => {
+  const ledger = dashboardFromOrders([]);
+  assert.equal(ledger.transactions.length, 0);
+  assert.equal(ledger.quotas[0].seatsReserved, 0);
+  assert.equal(ledger.quotas[0].seatsRemaining, DEFAULT_CLASS_SIZE);
 });

@@ -7,6 +7,7 @@ const defaultColDef = { flex: 1, minWidth: 112, sortable: true, resizable: true 
 const transactionColumns = [
   { field: 'studentName', headerName: 'STUDENT', minWidth: 150 },
   { field: 'cohortId', headerName: 'COHORT', minWidth: 145 },
+  { field: 'quantity', headerName: 'SEATS', minWidth: 80 },
   { field: 'captureId', headerName: 'CAPTURE ID', minWidth: 155, valueFormatter: ({ value }) => value || '—' },
   { field: 'amount', headerName: 'AMOUNT', minWidth: 100, valueFormatter: ({ data }) => data ? `${data.currency} ${data.amount}` : '—' },
   { field: 'status', headerName: 'PAYMENT STATUS', minWidth: 150 },

@@ -5,6 +5,8 @@ import AgentPanel from './components/AgentPanel.jsx';
 import NecDemo from './components/NecDemo.jsx';
 import SeatTable from './components/SeatTable.jsx';
 
+const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
+
 async function readResponse(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'The request could not be completed.');
@@ -20,7 +22,9 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [ledgerVersion, setLedgerVersion] = useState(0);
   const processedOrder = useRef('');
+  const accessToken = session?.access_token;
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
   const cancelledCheckout = new URLSearchParams(window.location.search).get('checkout') === 'cancelled';
 
@@ -28,8 +32,11 @@ export default function App() {
     let active = true;
     const refresh = async () => {
       try {
-        const data = await readResponse(await fetch('/api/dashboard'));
-        if (active) setDashboard(data);
+        const flags = await readResponse(await fetch('/api/dashboard'));
+        const ledger = accessToken
+          ? await readResponse(await fetch('/api/ledger', { headers: { Authorization: `Bearer ${accessToken}` } }))
+          : EMPTY_LEDGER;
+        if (active) setDashboard({ ...flags, ...ledger });
       } catch (error) {
         if (active) setNotice(error.message);
       }
@@ -40,7 +47,7 @@ export default function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [accessToken, ledgerVersion]);
 
   useEffect(() => {
     let subscription;
@@ -87,7 +94,7 @@ export default function App() {
         if (!active) return;
         setNotice(`Payment captured. ${transaction.studentName}'s seat is unlocked.`);
         window.history.replaceState({}, '', window.location.pathname);
-        setDashboard(await readResponse(await fetch('/api/dashboard')));
+        setLedgerVersion((version) => version + 1);
       })
       .catch((error) => active && setNotice(error.message))
       .finally(() => active && setBusy(false));
@@ -159,7 +166,7 @@ export default function App() {
           ) : (
           <form className="checkout-form" onSubmit={beginCheckout}>
             <label className="sr-only" htmlFor="student-name">Student name</label>
-            <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student name" maxLength="80" required />
+            <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} name="student-name" placeholder="Student's full name" autoComplete="off" maxLength="80" required />
             <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable}>
               {busy ? 'Processing…' : dashboard.paymentAvailable ? 'Buy one seat' : 'Add sandbox credentials'}
               <ArrowUpRight size={16} />

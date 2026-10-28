@@ -11,6 +11,8 @@ const environmentNames = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE
 const originalEnvironment = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
 let loggedActions;
 let paypalRequests;
+let storedOrders;
+let orderQueries;
 
 function fakeFetch(paypalHandler) {
   return async (url, options = {}) => {
@@ -20,7 +22,10 @@ function fakeFetch(paypalHandler) {
       return new Response(null, { status: 201 });
     }
     if (hostname === 'example.supabase.co' && pathname === '/rest/v1/paypal_orders') {
-      return new Response(null, { status: 201 });
+      if (options.method === 'POST') return new Response(null, { status: 201 });
+      const userFilter = new URL(url).searchParams.get('user_id');
+      orderQueries.push(userFilter);
+      return Response.json(storedOrders.filter((row) => `eq.${row.user_id}` === userFilter));
     }
     if (hostname === 'api-m.sandbox.paypal.com') {
       paypalRequests.push({ pathname, body: options.body });
@@ -59,6 +64,8 @@ test.beforeEach(() => {
   resetAgentState();
   loggedActions = [];
   paypalRequests = [];
+  storedOrders = [];
+  orderQueries = [];
   process.env.SUPABASE_URL = 'https://example.supabase.co';
   process.env.SUPABASE_ANON_KEY = 'test-anon-key';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
@@ -81,13 +88,18 @@ test('get_seat_pricing returns the fixed server-side price and order limit', asy
   assert.deepEqual(result, { unitPrice: '49.00', currency: 'USD', maxSeatsPerOrder: 200 });
 });
 
-test("get_current_seats reports the default class size and only the caller's own orders", async () => {
-  recordPendingOrder({ orderId: 'ORDER-A', userId: INSTRUCTOR, studentName: 'Fall class', quantity: 3, cohortId: 'cohort', amount: '147.00', currency: 'USD' });
-  recordPendingOrder({ orderId: 'ORDER-B', userId: OTHER_INSTRUCTOR, studentName: 'Other class', quantity: 2, cohortId: 'cohort', amount: '98.00', currency: 'USD' });
+test("get_current_seats reads the caller's own orders from Supabase, not server memory", async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-A', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 3, amount: 147, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T10:00:00Z', paypal_payments: [] },
+    { paypal_order_id: 'ORDER-B', user_id: OTHER_INSTRUCTOR, student_name: 'Other class', quantity: 2, amount: 98, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T11:00:00Z', paypal_payments: [] },
+  ];
+  resetSeatState();
 
   const { result } = await executeTool('get_current_seats', {}, { userId: INSTRUCTOR });
+  assert.deepEqual(orderQueries, [`eq.${INSTRUCTOR}`]);
   assert.equal(result.defaultClassSize, DEFAULT_CLASS_SIZE);
-  assert.equal(result.seatsRemaining, DEFAULT_CLASS_SIZE - 5);
+  assert.equal(result.seatsPending, 3);
+  assert.equal(result.seatsRemaining, DEFAULT_CLASS_SIZE - 3);
   assert.deepEqual(result.yourOrders.map((order) => order.orderId), ['ORDER-A']);
 });
 
