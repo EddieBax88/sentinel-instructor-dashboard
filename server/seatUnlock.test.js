@@ -6,6 +6,7 @@ import {
   resetSeatState,
   unlockSeatsFromVerifiedCapture,
 } from './seatUnlock.js';
+import { DEFAULT_CLASS_SIZE } from './config.js';
 
 test.beforeEach(resetSeatState);
 
@@ -45,17 +46,17 @@ test('returns a sortable live ledger containing both pending and completed order
   assert.equal(dashboard.transactions[0].status, 'AWAITING PAYMENT');
   assert.equal(dashboard.transactions[1].status, 'COMPLETED');
 });
-test('counts multi-seat orders by quantity and enforces cohort capacity', () => {
+test('counts multi-seat orders by quantity with no class-size cap', () => {
   recordPendingOrder({ orderId: 'ORDER-1', userId: 'USER-1', studentName: 'Fall class', quantity: 10, cohortId: 'cohort', amount: '490.00', currency: 'USD' });
-  assert.equal(getDashboardState().quotas[0].seatsReserved, 10);
-  assert.equal(getDashboardState().quotas[0].seatsAvailable, 2);
-  assert.throws(() => recordPendingOrder({
-    orderId: 'ORDER-2', userId: 'USER-2', studentName: 'Spring class', quantity: 3, cohortId: 'cohort', amount: '147.00', currency: 'USD',
-  }), /Only 2 of 12/);
+  recordPendingOrder({ orderId: 'ORDER-2', userId: 'USER-2', studentName: 'Spring class', quantity: 25, cohortId: 'cohort', amount: '1225.00', currency: 'USD' });
+  const quota = getDashboardState().quotas[0];
+  assert.equal(quota.classSize, DEFAULT_CLASS_SIZE);
+  assert.equal(quota.seatsReserved, 35);
+  assert.equal(quota.seatsRemaining, 0);
 
   unlockSeatsFromVerifiedCapture({
-    orderId: 'ORDER-1', captureId: 'CAP-1', status: 'COMPLETED', amount: '490.00', currency: 'USD', source: 'test',
+    orderId: 'ORDER-2', captureId: 'CAP-2', status: 'COMPLETED', amount: '1225.00', currency: 'USD', source: 'test',
   });
-  assert.equal(getDashboardState().quotas[0].seatsSold, 10);
-  assert.equal(getDashboardState().quotas[0].seatsAvailable, 2);
+  assert.equal(getDashboardState().quotas[0].seatsSold, 25);
+  assert.equal(getDashboardState().quotas[0].seatsReserved, 10);
 });

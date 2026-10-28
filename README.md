@@ -17,11 +17,12 @@ Open `http://localhost:3000`. Add sandbox credentials to `.env` to enable the pu
 - `server/index.js` serves the dashboard and exposes checkout and dashboard endpoints.
 - `server/paypal.js` handles OAuth, Orders v2 create/capture, and sandbox webhook verification.
 - `server/webhook.js` verifies capture event signatures before processing them.
+- `server/config.js` holds the default class size (`DEFAULT_CLASS_SIZE`, 30) and the per-order seat limit (`MAX_SEATS_PER_ORDER`, 200).
 - `server/agent.js` runs the seat assistant: the Claude tool loop, guardrails, and confirm-before-order proposals.
 - `server/supabase.js` validates checkout access tokens and persists PayPal orders and Sentinel Volt grants.
-- `server/seatUnlock.js` validates completed captures, enforces the fixed seat quota, and records transactions.
+- `server/seatUnlock.js` validates completed captures, counts seats sold and pending against the default class size, and records transactions.
 - `src/components/AgentPanel.jsx` is the seat assistant panel with the Confirm step.
-- `src/components/SeatTable.jsx` shows transactions, quota, and student readiness.
+- `src/components/SeatTable.jsx` shows transactions, class seats, and student readiness.
 - `src/components/NecDemo.jsx` provides a deterministic sample five-step lookup.
 
 ## Sandbox checkout
@@ -31,7 +32,7 @@ The server uses the PayPal Checkout Orders v2 API through the APIMatic-documente
 - `POST /v2/checkout/orders`
 - `POST /v2/checkout/orders/{id}/capture`
 
-Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` to sandbox app credentials in the ignored `.env` file. Set `PAYPAL_WEBHOOK_ID` to the sandbox webhook subscription ID to enable webhook verification. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; the service-role key must remain server-side. Apply the migration in `supabase/migrations` before enabling checkout. Order-creation and capture requests must send the signed-in Supabase access token as `Authorization: Bearer <access-token>`. The server validates the token with Supabase Auth and stores the resulting user ID in the PayPal order; it never accepts a caller-supplied user ID. The server uses only `https://api-m.sandbox.paypal.com`; seat price (`USD 49.00`) and cohort capacity are fixed server-side. Sentinel Volt access is granted only for a completed capture with the expected amount and currency, either from the Orders API response or a cryptographically verified `PAYMENT.CAPTURE.COMPLETED` webhook.
+Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` to sandbox app credentials in the ignored `.env` file. Set `PAYPAL_WEBHOOK_ID` to the sandbox webhook subscription ID to enable webhook verification. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; the service-role key must remain server-side. Apply the migration in `supabase/migrations` before enabling checkout. Order-creation and capture requests must send the signed-in Supabase access token as `Authorization: Bearer <access-token>`. The server validates the token with Supabase Auth and stores the resulting user ID in the PayPal order; it never accepts a caller-supplied user ID. The server uses only `https://api-m.sandbox.paypal.com`; seat price (`USD 49.00`) and the per-order limit (1 to 200 seats) are fixed server-side. There is no cohort-wide seat cap. Sentinel Volt access is granted only for a completed capture with the expected amount and currency, either from the Orders API response or a cryptographically verified `PAYMENT.CAPTURE.COMPLETED` webhook.
 
 The durable PayPal-order association and Sentinel Volt entitlement are stored in Supabase. The demo dashboard's seat reservations and transaction display remain in memory; restarting the server clears those dashboard records. PayPal webhook delivery requires a publicly reachable HTTPS URL, so local webhooks need a secure forwarding/tunnel setup.
 
@@ -46,7 +47,7 @@ The dashboard has a seat assistant. A signed-in instructor types a request in pl
 **Tools.** The model can call three tools, all implemented in `server/agent.js` on top of the existing checkout code:
 
 - `get_seat_pricing`: the fixed seat price (`USD 49.00`), currency, and per-order limit.
-- `get_current_seats`: cohort capacity, seats available, and the signed-in instructor's own orders.
+- `get_current_seats`: the default class size, seats sold and pending, seats remaining to reach that size, and the signed-in instructor's own orders.
 - `create_seat_order(quantity, class_name)`: validates the request and prepares a proposal. It does not call PayPal.
 
 The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. It ships adapters for the OpenAI Agents SDK, LangChain, Vercel AI SDK, MCP, and Bedrock, not the Anthropic SDK, and its `create_order` tool takes order details from the model. Here the price is fixed on the server and every order goes through the existing `createSandboxOrder` path and `paypal_orders` insert.
@@ -55,8 +56,8 @@ The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. It ships adapte
 
 **Guardrails.**
 
-- Quantity must be a whole number from 1 to 200 and cannot exceed the seats left in the cohort. The server checks this; the model's input is never trusted.
-- The system prompt limits the assistant to seat pricing, availability, and purchases, and tells it to decline anything else. This is enforced by the model's instructions, not by code.
+- Quantity must be a whole number from 1 to 200 per order. The server checks this; the model's input is never trusted. That is the only seat cap: the default class size of 30 is a planning number shown on the dashboard and suggested by the assistant, not a limit.
+- Off-topic requests are blocked in two layers. The system prompt tells the model to decline anything that isn't seat pricing, availability, or purchases. Then, in code, if the model's turn used no tools and the latest message isn't about seats or orders (and isn't a short reply to a seat question), the server discards the model's reply and returns a fixed decline. That event is logged as `off_topic_blocked`.
 - Every request is tied to the Supabase user from the verified access token. Tools never accept a user ID, `get_current_seats` returns only the caller's orders, and a proposal can be confirmed only by the instructor who created it, once, within 10 minutes.
 - The browser can send only plain-text turns; tool results and system messages from the client are rejected.
 - Each agent action (request, tool call, rejected tool call, proposal, reply, confirmation, order result) is logged to the `agent_actions` table. Apply `supabase/migrations/20261028150000_agent_actions_and_seat_quantity.sql` to create it and to allow multi-seat orders.

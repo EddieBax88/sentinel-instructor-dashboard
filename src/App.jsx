@@ -142,7 +142,7 @@ export default function App() {
             <h1>Make room for <em>what's next.</em></h1>
             <p className="subhead">Seat sales, payment confirmation, and student readiness in one place.</p>
           </div>
-          <div className="seat-counter"><span>SEATS AVAILABLE</span><strong>{quota?.seatsAvailable ?? '—'}<small> / {quota?.capacity ?? '—'}</small></strong></div>
+          <div className="seat-counter"><span>SEATS REMAINING</span><strong>{quota?.seatsRemaining ?? '—'}<small> / {quota?.classSize ?? '—'}</small></strong></div>
         </section>
 
         <section className="checkout-band" aria-label="Sandbox seat checkout">
@@ -160,7 +160,7 @@ export default function App() {
           <form className="checkout-form" onSubmit={beginCheckout}>
             <label className="sr-only" htmlFor="student-name">Student name</label>
             <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student name" maxLength="80" required />
-            <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable || quota?.seatsAvailable === 0}>
+            <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable}>
               {busy ? 'Processing…' : dashboard.paymentAvailable ? 'Buy one seat' : 'Add sandbox credentials'}
               <ArrowUpRight size={16} />
             </button>

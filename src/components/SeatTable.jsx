@@ -13,10 +13,10 @@ const transactionColumns = [
 ];
 const quotaColumns = [
   { field: 'cohort', headerName: 'COHORT', minWidth: 170 },
-  { field: 'capacity', headerName: 'QUOTA' },
+  { field: 'classSize', headerName: 'CLASS SIZE' },
   { field: 'seatsSold', headerName: 'UNLOCKED' },
   { field: 'seatsReserved', headerName: 'PENDING' },
-  { field: 'seatsAvailable', headerName: 'AVAILABLE' },
+  { field: 'seatsRemaining', headerName: 'REMAINING' },
 ];
 const studentColumns = [
   { field: 'name', headerName: 'STUDENT', minWidth: 150 },
@@ -36,7 +36,7 @@ export default function SeatTable({ transactions, quotas, students }) {
   return (
     <div className="tables-stack">
       <section className="table-block"><div className="table-heading"><h3>Transactions</h3><span>{transactions.length} orders</span></div><GridTable rows={transactions} columns={transactionColumns} emptyText="No seat orders yet." /></section>
-      <section className="table-block"><div className="table-heading"><h3>Seat quota</h3><span>Fixed cohort capacity</span></div><GridTable rows={quotas} columns={quotaColumns} emptyText="Quota data unavailable." /></section>
+      <section className="table-block"><div className="table-heading"><h3>Class seats</h3><span>Default class size</span></div><GridTable rows={quotas} columns={quotaColumns} emptyText="Quota data unavailable." /></section>
       <section className="table-block"><div className="table-heading"><h3>Student readiness</h3><span>{students.length} students</span></div><GridTable rows={students} columns={studentColumns} emptyText="Students appear here when a seat order starts." /></section>
     </div>
   );

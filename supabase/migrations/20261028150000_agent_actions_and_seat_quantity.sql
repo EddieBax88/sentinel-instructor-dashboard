@@ -21,7 +21,7 @@ create table if not exists public.agent_actions (
   user_id uuid not null references auth.users (id) on delete cascade,
   action text not null check (action in (
     'chat_request', 'tool_call', 'tool_rejected', 'order_proposed',
-    'agent_reply', 'confirm_rejected', 'order_created', 'order_failed'
+    'agent_reply', 'off_topic_blocked', 'confirm_rejected', 'order_created', 'order_failed'
   )),
   details jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()

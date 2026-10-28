@@ -1,7 +1,9 @@
+import { DEFAULT_CLASS_SIZE } from './config.js';
+
 export const COHORT = Object.freeze({
   id: 'sentinel-fall-2026',
   name: 'Sentinel Fall 2026',
-  capacity: 12,
+  classSize: DEFAULT_CLASS_SIZE,
 });
 
 const pendingOrders = new Map();
@@ -13,18 +15,9 @@ function seatCount(orders) {
   return seats;
 }
 
-export function seatsAvailable() {
-  return COHORT.capacity - seatCount(transactions) - seatCount(pendingOrders);
-}
-
-export function assertSeatAvailable(quantity = 1) {
-  const available = seatsAvailable();
-  if (available <= 0) {
-    throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
-  }
-  if (quantity > available) {
-    throw Object.assign(new Error(`Only ${available} of ${COHORT.capacity} cohort seats are available.`), { statusCode: 409 });
-  }
+// Seats still needed to reach the default class size. Informational: orders may go past it.
+export function seatsRemaining() {
+  return Math.max(0, COHORT.classSize - seatCount(transactions) - seatCount(pendingOrders));
 }
 
 export function recordPendingOrder(order) {
@@ -33,7 +26,6 @@ export function recordPendingOrder(order) {
   }
   if (pendingOrders.has(order.orderId) || transactions.has(order.orderId)) return;
   const quantity = order.quantity ?? 1;
-  assertSeatAvailable(quantity);
   pendingOrders.set(order.orderId, { ...order, quantity, status: 'PENDING', createdAt: new Date().toISOString() });
 }
 
@@ -60,9 +52,6 @@ export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amo
   }
   if (amount !== order.amount || currency !== order.currency) {
     throw Object.assign(new Error('Capture amount or currency does not match the pending seat order.'), { statusCode: 409 });
-  }
-  if (seatCount(transactions) + order.quantity > COHORT.capacity) {
-    throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
   }
 
   const transaction = {
@@ -117,10 +106,10 @@ export function getDashboardState() {
     quotas: [{
       id: COHORT.id,
       cohort: COHORT.name,
-      capacity: COHORT.capacity,
+      classSize: COHORT.classSize,
       seatsSold: seatCount(transactions),
       seatsReserved: seatCount(pendingOrders),
-      seatsAvailable: seatsAvailable(),
+      seatsRemaining: seatsRemaining(),
     }],
     students,
   };

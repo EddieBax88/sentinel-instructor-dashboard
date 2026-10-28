@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { randomUUID } from 'node:crypto';
-import { assertSeatQuantity, createSandboxOrder, MAX_SEATS_PER_ORDER, SEAT_PRICING, seatOrderTotal } from './paypal.js';
-import { assertSeatAvailable, COHORT, getOrdersForUser, seatsAvailable } from './seatUnlock.js';
+import { MAX_SEATS_PER_ORDER } from './config.js';
+import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
+import { COHORT, getOrdersForUser, seatsRemaining } from './seatUnlock.js';
 import { logAgentAction } from './supabase.js';
 
 export const AGENT_MODEL = 'claude-opus-5-5';
@@ -9,13 +10,15 @@ const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_LENGTH = 2000;
-const OFF_TOPIC_REPLY = 'I can only help with seat pricing, seat availability, and buying cohort seats.';
+export const OFF_TOPIC_REPLY = 'I can only help with seat pricing, seat availability, and buying cohort seats.';
+const SEAT_TOPIC = /\b(seats?|orders?|ordering|buy|buying|purchas\w*|pric\w*|costs?|totals?|class(es)?|cohorts?|students?|enroll\w*|checkout|paypal|pay|payment|confirm\w*|cancel\w*|availab\w*|quantity|how many)\b/i;
+const MAX_FOLLOW_UP_WORDS = 8;
 
 const SYSTEM_PROMPT = `You are the seat-purchasing assistant on the Sentinel instructor dashboard. A signed-in instructor uses you to buy seats in their cohort through PayPal Sandbox.
 
 You can do three things: report seat pricing, report seat availability and the instructor's own seat orders, and prepare a seat order for the instructor to confirm. If a request is about anything else, decline in one sentence and say what you can help with. Do not answer general questions, write other content, or discuss other products.
 
-When the instructor asks to buy seats, call get_seat_pricing and get_current_seats, then call create_seat_order with the quantity and a short class name. If they did not give a quantity, ask for one. Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER} and cannot exceed the seats available.
+When the instructor asks to buy seats, call get_seat_pricing and get_current_seats, then call create_seat_order with the quantity and a short class name. If they did not give a quantity, ask for one; you may suggest the default class size from get_current_seats. Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER}.
 
 create_seat_order does not charge anything or create a PayPal order. It prepares a proposal, and nothing is ordered until the instructor clicks Confirm on the dashboard. After it succeeds, state the quantity, unit price, and total from the tool result and tell the instructor to click Confirm to continue to PayPal. Never say an order was placed or paid.
 
@@ -30,7 +33,7 @@ const TOOLS = [
   },
   {
     name: 'get_current_seats',
-    description: "Returns the cohort's capacity and available seats, plus the signed-in instructor's own seat orders.",
+    description: "Returns the default class size, seats sold and pending, seats remaining to reach the default class size, and the signed-in instructor's own seat orders.",
     input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
     strict: true,
   },
@@ -71,7 +74,6 @@ export function validateSeatRequest({ quantity, class_name: className }) {
   if (!normalizedName || normalizedName.length > 80) {
     throw Object.assign(new Error('Class name must be 1 to 80 characters.'), { statusCode: 400 });
   }
-  assertSeatAvailable(quantity);
   return { quantity, className: normalizedName };
 }
 
@@ -87,8 +89,8 @@ export async function executeTool(name, input, { userId }) {
     return {
       result: {
         cohort: COHORT.name,
-        capacity: COHORT.capacity,
-        seatsAvailable: seatsAvailable(),
+        defaultClassSize: COHORT.classSize,
+        seatsRemaining: seatsRemaining(),
         yourOrders: getOrdersForUser(userId),
       },
     };
@@ -131,6 +133,17 @@ function validateMessages(messages) {
   return messages.map(({ role, content }) => ({ role, content }));
 }
 
+// Server-side topic gate for turns where the model used no tools. On topic: the latest message
+// mentions seats or orders, or is a short reply to an assistant turn that did.
+export function isSeatRequest(messages) {
+  const latest = messages.at(-1).content;
+  if (SEAT_TOPIC.test(latest)) return true;
+  const previous = messages.at(-2);
+  return previous?.role === 'assistant'
+    && SEAT_TOPIC.test(previous.content)
+    && latest.trim().split(/\s+/).length <= MAX_FOLLOW_UP_WORDS;
+}
+
 function replyText(content) {
   return content.filter((block) => block.type === 'text').map((block) => block.text).join('\n').trim();
 }
@@ -139,10 +152,12 @@ function replyText(content) {
 // inside one request the loop appends each response unchanged.
 export async function runAgent({ userId, messages, client = anthropicClient() }) {
   const conversation = validateMessages(messages);
+  const onTopic = isSeatRequest(conversation);
   await logAgentAction({ userId, action: 'chat_request', details: { message: conversation.at(-1).content.slice(0, 500) } });
 
   let proposal = null;
   let reply = '';
+  let usedTools = false;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const response = await client.beta.messages.create({
       model: AGENT_MODEL,
@@ -165,6 +180,7 @@ export async function runAgent({ userId, messages, client = anthropicClient() })
       break;
     }
 
+    usedTools = true;
     conversation.push({ role: 'assistant', content: response.content });
     const toolResults = [];
     for (const toolUse of toolUses) {
@@ -179,6 +195,11 @@ export async function runAgent({ userId, messages, client = anthropicClient() })
       }
     }
     conversation.push({ role: 'user', content: toolResults });
+  }
+
+  if (!usedTools && !onTopic) {
+    await logAgentAction({ userId, action: 'off_topic_blocked', details: { message: conversation.at(-1).content.slice(0, 500) } });
+    return { reply: OFF_TOPIC_REPLY, proposal: null };
   }
 
   reply ||= proposal

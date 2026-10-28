@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_SEATS_PER_ORDER } from './config.js';
 import {
-  assertSeatAvailable,
   discardPendingOrder,
   findTransactionByOrderId,
   getPendingOrder,
@@ -13,7 +13,6 @@ const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
 const SEAT_PRICE = '49.00';
 const COHORT_ID = 'sentinel-fall-2026';
-export const MAX_SEATS_PER_ORDER = 200;
 export const SEAT_PRICING = Object.freeze({ unitPrice: SEAT_PRICE, currency: CURRENCY });
 let tokenCache;
 
@@ -122,7 +121,6 @@ export async function createSandboxOrder({ studentName, userId, quantity = 1 }) 
     throw Object.assign(new Error('A verified Supabase account is required to start checkout.'), { statusCode: 401 });
   }
   assertSeatQuantity(quantity);
-  assertSeatAvailable(quantity);
   const total = seatOrderTotal(quantity);
 
   const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
