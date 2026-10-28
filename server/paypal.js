@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { MAX_SEATS_PER_ORDER } from './config.js';
 import { money } from './seatUnlock.js';
-import { getPaypalOrder, grantSentinelVoltAccess, savePaypalOrder } from './supabase.js';
+import { getPaypalOrder, grantSeatAccess, savePaypalOrder } from './supabase.js';
 
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
@@ -258,7 +258,7 @@ export async function captureSandboxOrder(orderId, userId) {
     amount: completedCapture.amount?.value,
     currency: completedCapture.amount?.currency_code,
   });
-  await grantSentinelVoltAccess({ userId: order.user_id, orderId, ...capture });
+  await grantSeatAccess({ userId: order.user_id, orderId, ...capture });
   return { transaction: completedTransaction(order, capture), alreadyCaptured: false };
 }
 

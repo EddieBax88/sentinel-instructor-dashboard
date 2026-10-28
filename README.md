@@ -19,11 +19,10 @@ Open `http://localhost:3000`. Add sandbox credentials to `.env` to enable the pu
 - `server/webhook.js` verifies capture event signatures before processing them.
 - `server/config.js` holds the default class size (`DEFAULT_CLASS_SIZE`, 30), the per-order seat limit (`MAX_SEATS_PER_ORDER`, 200), and the seat assistant's model and endpoint.
 - `server/agent.js` runs the seat assistant: the tool-calling loop, guardrails, and confirm-before-order proposals.
-- `server/supabase.js` validates checkout access tokens and persists PayPal orders and Sentinel Volt grants.
+- `server/supabase.js` validates checkout access tokens and persists PayPal orders and seat grants.
 - `server/seatUnlock.js` validates completed captures, counts seats sold and pending against the default class size, and records transactions.
 - `src/components/AgentPanel.jsx` is the seat assistant panel with the Confirm step.
 - `src/components/SeatTable.jsx` shows transactions, class seats, and student readiness.
-- `src/components/NecDemo.jsx` provides a deterministic sample five-step lookup.
 
 ## Sandbox checkout
 
@@ -32,11 +31,9 @@ The server uses the PayPal Checkout Orders v2 API through the APIMatic-documente
 - `POST /v2/checkout/orders`
 - `POST /v2/checkout/orders/{id}/capture`
 
-Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` to sandbox app credentials in the ignored `.env` file. Set `PAYPAL_WEBHOOK_ID` to the sandbox webhook subscription ID to enable webhook verification. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; the service-role key must remain server-side. Apply the migration in `supabase/migrations` before enabling checkout. Order-creation and capture requests must send the signed-in Supabase access token as `Authorization: Bearer <access-token>`. The server validates the token with Supabase Auth and stores the resulting user ID in the PayPal order; it never accepts a caller-supplied user ID. The server uses only `https://api-m.sandbox.paypal.com`; seat price (`USD 49.00`) and the per-order limit (1 to 200 seats) are fixed server-side. There is no cohort-wide seat cap. Sentinel Volt access is granted only for a completed capture with the expected amount and currency, either from the Orders API response or a cryptographically verified `PAYMENT.CAPTURE.COMPLETED` webhook.
+Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` to sandbox app credentials in the ignored `.env` file. Set `PAYPAL_WEBHOOK_ID` to the sandbox webhook subscription ID to enable webhook verification. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; the service-role key must remain server-side. Apply the migration in `supabase/migrations` before enabling checkout. Order-creation and capture requests must send the signed-in Supabase access token as `Authorization: Bearer <access-token>`. The server validates the token with Supabase Auth and stores the resulting user ID in the PayPal order; it never accepts a caller-supplied user ID. The server uses only `https://api-m.sandbox.paypal.com`; seat price (`USD 49.00`) and the per-order limit (1 to 200 seats) are fixed server-side. There is no cohort-wide seat cap. Seats are granted only for a completed capture with the expected amount and currency, either from the Orders API response or a cryptographically verified `PAYMENT.CAPTURE.COMPLETED` webhook.
 
-The durable PayPal-order association and Sentinel Volt entitlement are stored in Supabase. The dashboard ledger (transactions, class seats, student readiness) is read from Supabase `paypal_orders` through `GET /api/ledger`, which requires the signed-in access token and returns only that instructor's orders; the server applies the user filter with the secret key, so the browser never chooses whose orders it sees. Pending seats count by order quantity. Capture and the PayPal webhook also read the order from Supabase, so both work after a server restart. A capture is accepted only for the signed-in owner of the order and only if the amount equals USD 49.00 × quantity. The `grant_sentinel_volt_access` function marks the order completed and writes `paypal_payments` in one transaction, and returns without granting again for a capture it has already recorded, so duplicate captures and webhooks are no-ops. The server keeps no order state in memory. PayPal webhook delivery requires a publicly reachable HTTPS URL, so local webhooks need a secure forwarding/tunnel setup.
-
-The NEC lookup contains fictional sample labels and paraphrased navigation only; it does not reproduce code-book text or connect to a live platform.
+The durable PayPal-order association and seat grants are stored in Supabase. The dashboard ledger (transactions, class seats, student readiness) is read from Supabase `paypal_orders` through `GET /api/ledger`, which requires the signed-in access token and returns only that instructor's orders; the server applies the user filter with the secret key, so the browser never chooses whose orders it sees. Pending seats count by order quantity. Capture and the PayPal webhook also read the order from Supabase, so both work after a server restart. A capture is accepted only for the signed-in owner of the order and only if the amount equals USD 49.00 × quantity. The seat grant function marks the order completed and writes `paypal_payments` in one transaction, and returns without granting again for a capture it has already recorded, so duplicate captures and webhooks are no-ops. The server keeps no order state in memory. PayPal webhook delivery requires a publicly reachable HTTPS URL, so local webhooks need a secure forwarding/tunnel setup.
 
 ## How AI is used
 
@@ -52,7 +49,7 @@ The dashboard has a seat assistant. A signed-in instructor types a request in pl
 
 The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. Its `create_order` tool takes order details from the model, and its adapters target agent frameworks this server doesn't use. Here the price is fixed on the server and every order goes through the existing `createSandboxOrder` path and `paypal_orders` insert.
 
-**Why approval is required.** The model never creates an order or moves money. `create_seat_order` only returns a proposal showing quantity, unit price, and total. The order is created only when the instructor clicks **Confirm**, which calls `POST /api/agent/proposals/:id/confirm`. That creates the PayPal Sandbox order and returns the approval link. Payment is captured only after the instructor approves it on PayPal, and seats are granted only by the existing verified-capture path and `grant_sentinel_volt_access` function. A language model can misread a request, so a person checks the amount before anything is charged.
+**Why approval is required.** The model never creates an order or moves money. `create_seat_order` only returns a proposal showing quantity, unit price, and total. The order is created only when the instructor clicks **Confirm**, which calls `POST /api/agent/proposals/:id/confirm`. That creates the PayPal Sandbox order and returns the approval link. Payment is captured only after the instructor approves it on PayPal, and seats are granted only by the existing verified-capture path and seat grant function. A language model can misread a request, so a person checks the amount before anything is charged.
 
 **Guardrails.**
 
@@ -63,6 +60,15 @@ The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. Its `create_ord
 - Each agent action (request, tool call, rejected tool call, proposal, reply, confirmation, order result) is logged to the `agent_actions` table. Apply `supabase/migrations/20261028150000_agent_actions_and_seat_quantity.sql` to create it and to allow multi-seat orders.
 
 Proposals are held in server memory, like the demo's seat ledger, so restarting the server clears them.
+
+## Database migrations
+
+Apply the files in `supabase/migrations` in order, in the Supabase SQL editor or with the Supabase CLI:
+
+1. `20261027054700_paypal_orders_and_entitlements.sql`: PayPal orders, payments, and seat entitlements.
+2. `20261028150000_agent_actions_and_seat_quantity.sql`: multi-seat quantity, the seat assistant's `agent_actions` log, and the idempotent seat grant function. Safe to re-run.
+
+The first file was renamed from its original name; its SQL is unchanged. The Supabase CLI tracks migrations by the numeric version prefix, which did not change, so an already-applied database needs no action. The database objects it created keep their original names (the seat grant function is the `SEAT_GRANT_FUNCTION` constant in `server/supabase.js`); renaming them would take a new migration.
 
 ## Production build
 

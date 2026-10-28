@@ -59,18 +59,6 @@ h2 { margin: 0; font: 700 18px 'Manrope', sans-serif; letter-spacing: 0; }
 .grid-frame { width: 100%; min-height: 47px; --ag-font-family: 'DM Sans', sans-serif; --ag-font-size: 10px; --ag-header-font-size: 9px; --ag-header-background-color: #f8faf8; --ag-header-foreground-color: #7c8880; --ag-border-color: #edf1ed; --ag-row-border-color: #edf1ed; --ag-header-height: 32px; --ag-row-height: 34px; --ag-wrapper-border-radius: 0; }
 .grid-frame .ag-root-wrapper { border: 0; }
 .grid-empty { min-height: 48px; display: flex; align-items: center; padding: 0 13px; color: #8b9690; font-size: 10px; }
-.nec-section { margin-top: 34px; }
-.nec-demo { padding: 15px; background: #fff; border: 1px solid var(--line); border-radius: 5px; }
-.nec-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #e6ece6; border-radius: 4px; overflow: hidden; }
-.nec-step { min-width: 0; min-height: 110px; display: flex; flex-direction: column; align-items: flex-start; padding: 11px; text-align: left; color: var(--ink); background: #fff; border: 0; border-right: 1px solid #e6ece6; cursor: pointer; }
-.nec-step:last-child { border-right: 0; }
-.nec-step:hover, .nec-step.selected { background: #f3f8f3; }
-.nec-step.visited .nec-step-top > span { color: var(--green); }
-.nec-step-top { width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; color: #98a39b; font-size: 9px; }
-.nec-step strong { font: 700 11px 'Manrope', sans-serif; }
-.nec-value { margin-top: 7px; color: #718078; font-size: 9px; line-height: 1.45; overflow-wrap: anywhere; }
-.nec-controls { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 12px; color: #8a958e; font-size: 9px; }
-.nec-controls button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; color: var(--green); background: #fff; border: 1px solid #dfe8df; border-radius: 4px; font-size: 9px; cursor: pointer; }
 footer { margin-top: 22px; padding-top: 13px; color: #8c9790; border-top: 1px solid var(--line); font-size: 9px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -98,13 +86,9 @@ footer { margin-top: 22px; padding-top: 13px; color: #8c9790; border-top: 1px so
   .checkout-band { padding: 13px; }
   .checkout-form { flex-direction: column; }
   .checkout-form input, .checkout-button { width: 100%; min-height: 38px; }
-  .ledger-section, .nec-section { margin-top: 28px; }
-  .nec-demo { padding: 10px; }
-  .nec-flow { grid-template-columns: 1fr; }
-  .nec-step { min-height: 0; padding: 9px 10px; border-right: 0; border-bottom: 1px solid #e6ece6; }
-  .nec-step:last-child { border-bottom: 0; }
-  .nec-step-top { margin-bottom: 5px; }
-}.agent-panel { margin-top: 12px; padding: 15px 18px; background: #fff; border: 1px solid var(--line); border-radius: 5px; }
+  .ledger-section { margin-top: 28px; }
+}
+.agent-panel { margin-top: 12px; padding: 15px 18px; background: #fff; border: 1px solid var(--line); border-radius: 5px; }
 .agent-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 11px; color: var(--green); }
 .agent-heading strong { color: var(--ink); font-size: 12px; }
 .agent-heading span { color: var(--muted); font-size: 10px; }

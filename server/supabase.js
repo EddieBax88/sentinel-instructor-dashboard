@@ -131,9 +131,12 @@ export async function listPaypalOrdersForUser(userId) {
   return rows;
 }
 
-export async function grantSentinelVoltAccess({ userId, orderId, captureId, status, amount, currency }) {
+// Name of the seat grant function already deployed in Supabase. Renaming it requires a new migration.
+export const SEAT_GRANT_FUNCTION = 'grant_sentinel_volt_access';
+
+export async function grantSeatAccess({ userId, orderId, captureId, status, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
-  const response = await fetch(`${baseUrl}/rest/v1/rpc/grant_sentinel_volt_access`, {
+  const response = await fetch(`${baseUrl}/rest/v1/rpc/${SEAT_GRANT_FUNCTION}`, {
     method: 'POST',
     headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
     body: JSON.stringify({
@@ -147,7 +150,7 @@ export async function grantSentinelVoltAccess({ userId, orderId, captureId, stat
   });
   if (!response.ok) {
     await readJson(response);
-    throw Object.assign(new Error(`Supabase could not grant Sentinel Volt access (${response.status}).`), { statusCode: 502 });
+    throw Object.assign(new Error(`Supabase could not grant seat access (${response.status}).`), { statusCode: 502 });
   }
 }
 

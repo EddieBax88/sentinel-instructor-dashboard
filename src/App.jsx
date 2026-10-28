@@ -2,7 +2,6 @@ import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
 import AgentPanel from './components/AgentPanel.jsx';
-import NecDemo from './components/NecDemo.jsx';
 import SeatTable from './components/SeatTable.jsx';
 
 const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
@@ -82,24 +81,24 @@ export default function App() {
     setBusy(false);
   }
 
+  // Runs once per returned order. Keyed on the access token, not the session object: Supabase
+  // replaces the session object after sign-in loads, and a cancelled run left busy stuck on.
   useEffect(() => {
-    if (!orderFromReturn || !session || processedOrder.current === orderFromReturn) return;
+    if (!orderFromReturn || !accessToken || processedOrder.current === orderFromReturn) return;
     processedOrder.current = orderFromReturn;
-    let active = true;
     setBusy(true);
     setNotice('PayPal approved the order. Confirming capture…');
-    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST', headers: authHeaders() })
+    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` } })
       .then(readResponse)
-      .then(async ({ transaction }) => {
-        if (!active) return;
-        setNotice(`Payment captured. ${transaction.studentName}'s seat is unlocked.`);
+      .then(({ transaction }) => {
+        const seats = transaction.quantity === 1 ? '1 seat' : `${transaction.quantity} seats`;
+        setNotice(`Payment captured. ${seats} unlocked for ${transaction.studentName}.`);
         window.history.replaceState({}, '', window.location.pathname);
         setLedgerVersion((version) => version + 1);
       })
-      .catch((error) => active && setNotice(error.message))
-      .finally(() => active && setBusy(false));
-    return () => { active = false; };
-  }, [orderFromReturn, session]);
+      .catch((error) => setNotice(error.message))
+      .finally(() => setBusy(false));
+  }, [orderFromReturn, accessToken]);
 
   useEffect(() => {
     if (cancelledCheckout) setNotice('Checkout was cancelled. No seat was changed.');
@@ -133,7 +132,6 @@ export default function App() {
         <div className="rail-label">INSTRUCTOR</div>
         <a className="rail-link active" href="#overview">Overview</a>
         <a className="rail-link" href="#seat-ledger">Seat ledger</a>
-        <a className="rail-link" href="#nec-demo">NEC demo</a>
         <div className="rail-bottom"><ShieldCheck size={16} /><span>Sandbox environment</span></div>
       </aside>
 
@@ -180,11 +178,6 @@ export default function App() {
         <section id="seat-ledger" className="ledger-section">
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>
           <SeatTable transactions={dashboard.transactions} quotas={dashboard.quotas} students={dashboard.students} />
-        </section>
-
-        <section id="nec-demo" className="nec-section">
-          <div className="section-title"><div><p className="eyebrow">REFERENCE FLOW / SAMPLE DATA</p><h2>NEC lookup demo</h2></div></div>
-          <NecDemo />
         </section>
         <footer>Payments route only to PayPal Sandbox. Seat counts update only after a completed, verified capture.</footer>
       </main>

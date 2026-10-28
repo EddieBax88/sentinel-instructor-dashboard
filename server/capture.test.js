@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { captureSandboxOrder, verifyCaptureForOrder } from './paypal.js';
+import { SEAT_GRANT_FUNCTION } from './supabase.js';
 import webhookRouter from './webhook.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -38,7 +39,7 @@ async function fakeFetch(url, options = {}) {
     const id = searchParams.get('paypal_order_id')?.replace(/^eq\./, '');
     return Response.json(orders.filter((order) => order.paypal_order_id === id).map((order) => structuredClone(order)));
   }
-  if (hostname === 'example.supabase.co' && pathname === '/rest/v1/rpc/grant_sentinel_volt_access') {
+  if (hostname === 'example.supabase.co' && pathname === `/rest/v1/rpc/${SEAT_GRANT_FUNCTION}`) {
     const body = JSON.parse(options.body);
     grants.push(body);
     const order = orders.find((row) => row.paypal_order_id === body.p_order_id);

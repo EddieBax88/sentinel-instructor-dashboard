@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import {
   authenticateSupabaseUser,
   getPaypalOrder,
-  grantSentinelVoltAccess,
+  grantSeatAccess,
   listPaypalOrdersForUser,
   publicSupabaseConfiguration,
   savePaypalOrder,
+  SEAT_GRANT_FUNCTION,
 } from './supabase.js';
 
 const originalFetch = globalThis.fetch;
@@ -95,9 +96,9 @@ test('reads the durable user association by PayPal order id', async () => {
   assert.equal((await getPaypalOrder('ORDER-1')).user_id, 'user-123');
 });
 
-test('calls the atomic Sentinel Volt entitlement grant function', async () => {
+test('calls the atomic seat grant function', async () => {
   globalThis.fetch = async (url, options) => {
-    assert.equal(url, 'https://example.supabase.co/rest/v1/rpc/grant_sentinel_volt_access');
+    assert.equal(url, `https://example.supabase.co/rest/v1/rpc/${SEAT_GRANT_FUNCTION}`);
     assert.equal(options.method, 'POST');
     assert.equal(options.headers.Authorization, 'Bearer test-service-role-key');
     assert.deepEqual(JSON.parse(options.body), {
@@ -111,7 +112,7 @@ test('calls the atomic Sentinel Volt entitlement grant function', async () => {
     return new Response(null, { status: 204 });
   };
 
-  await grantSentinelVoltAccess({
+  await grantSeatAccess({
     userId: 'user-123',
     orderId: 'ORDER-1',
     captureId: 'CAPTURE-1',
