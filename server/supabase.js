@@ -131,8 +131,8 @@ export async function listPaypalOrdersForUser(userId) {
   return rows;
 }
 
-// Name of the seat grant function already deployed in Supabase. Renaming it requires a new migration.
-export const SEAT_GRANT_FUNCTION = 'grant_sentinel_volt_access';
+// Supabase function that records a verified capture and grants the seats (see supabase/migrations).
+export const SEAT_GRANT_FUNCTION = 'grant_seat_access';
 
 export async function grantSeatAccess({ userId, orderId, captureId, status, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
