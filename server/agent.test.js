@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AGENT_MODEL, confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
-import { DEFAULT_CLASS_SIZE } from './config.js';
+import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
+import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
 import { getDashboardState, recordPendingOrder, resetSeatState } from './seatUnlock.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -35,8 +35,8 @@ function scriptedClient(responses) {
   const requests = [];
   return {
     requests,
-    beta: {
-      messages: {
+    chat: {
+      completions: {
         create: async (params) => {
           requests.push(structuredClone(params));
           const next = responses.shift();
@@ -48,8 +48,11 @@ function scriptedClient(responses) {
   };
 }
 
-const toolUse = (id, name, input = {}) => ({ type: 'tool_use', id, name, input });
-const text = (value) => ({ type: 'text', text: value });
+const completion = (message, finishReason) => ({ choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: finishReason }] });
+const toolCall = (id, name, input = {}) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(input) } });
+const toolCalls = (...calls) => completion({ content: '', tool_calls: calls }, 'tool_calls');
+const textReply = (content) => completion({ content }, 'stop');
+const refusal = () => completion({ content: null, refusal: 'Declined.' }, 'stop');
 
 test.beforeEach(() => {
   resetSeatState();
@@ -108,9 +111,9 @@ test('allows any order of 1-200 seats with no class-size cap', async () => {
 
 test('runs the tool loop and returns a proposal without creating a PayPal order', async () => {
   const client = scriptedClient([
-    { stop_reason: 'tool_use', content: [toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats')] },
-    { stop_reason: 'tool_use', content: [toolUse('t3', 'create_seat_order', { quantity: 12, class_name: 'Fall class' })] },
-    { stop_reason: 'end_turn', content: [text('12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.')] },
+    toolCalls(toolCall('t1', 'get_seat_pricing'), toolCall('t2', 'get_current_seats')),
+    toolCalls(toolCall('t3', 'create_seat_order', { quantity: 12, class_name: 'Fall class' })),
+    textReply('12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.'),
   ]);
 
   const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class.' }], client });
@@ -125,11 +128,16 @@ test('runs the tool loop and returns a proposal without creating a PayPal order'
 
   const [firstRequest] = client.requests;
   assert.equal(firstRequest.model, AGENT_MODEL);
-  assert.deepEqual(firstRequest.tools.map((tool) => tool.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order']);
-  assert.ok(firstRequest.system.includes('decline in one sentence'));
-  const toolResults = client.requests[2].messages.at(-1).content;
-  assert.equal(toolResults[0].tool_use_id, 't3');
-  assert.match(toolResults[0].content, /AWAITING_INSTRUCTOR_CONFIRMATION/);
+  assert.deepEqual(firstRequest.tools.map((tool) => tool.function.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order']);
+  assert.equal(firstRequest.messages[0].role, 'system');
+  assert.ok(firstRequest.messages[0].content.includes('decline in one sentence'));
+  assert.deepEqual(firstRequest.chat_template_kwargs, { enable_thinking: true, force_nonempty_content: true });
+  const secondRequest = client.requests[1];
+  assert.deepEqual(secondRequest.messages.slice(-2).map((message) => [message.role, message.tool_call_id]), [['tool', 't1'], ['tool', 't2']]);
+  const toolResult = client.requests[2].messages.at(-1);
+  assert.equal(toolResult.role, 'tool');
+  assert.equal(toolResult.tool_call_id, 't3');
+  assert.match(toolResult.content, /AWAITING_INSTRUCTOR_CONFIRMATION/);
 
   const actions = loggedActions.map((row) => row.action);
   assert.deepEqual(actions, ['chat_request', 'tool_call', 'tool_call', 'order_proposed', 'tool_call', 'agent_reply']);
@@ -138,54 +146,69 @@ test('runs the tool loop and returns a proposal without creating a PayPal order'
 
 test('returns an error tool result instead of a proposal when the model asks for too many seats', async () => {
   const client = scriptedClient([
-    { stop_reason: 'tool_use', content: [toolUse('t1', 'create_seat_order', { quantity: 300, class_name: 'Fall class' })] },
-    { stop_reason: 'end_turn', content: [text('Orders are limited to 200 seats.')] },
+    toolCalls(toolCall('t1', 'create_seat_order', { quantity: 300, class_name: 'Fall class' })),
+    textReply('Orders are limited to 200 seats.'),
   ]);
 
   const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 300 seats.' }], client });
 
   assert.equal(proposal, null);
-  const [toolResult] = client.requests[1].messages.at(-1).content;
-  assert.equal(toolResult.is_error, true);
+  const toolResult = client.requests[1].messages.at(-1);
+  assert.equal(toolResult.tool_call_id, 't1');
+  assert.ok(JSON.parse(toolResult.content).error);
   assert.match(toolResult.content, /1 to 200/);
   assert.ok(loggedActions.some((row) => row.action === 'tool_rejected'));
 });
 
 test('rejects unknown tools the model invents', async () => {
   const client = scriptedClient([
-    { stop_reason: 'tool_use', content: [toolUse('t1', 'issue_refund', { amount: 49 })] },
-    { stop_reason: 'end_turn', content: [text('I can only help with seats.')] },
+    toolCalls(toolCall('t1', 'issue_refund', { amount: 49 })),
+    textReply('I can only help with seats.'),
   ]);
 
   const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Refund me.' }], client });
 
   assert.equal(proposal, null);
-  const [toolResult] = client.requests[1].messages.at(-1).content;
-  assert.equal(toolResult.is_error, true);
+  const toolResult = client.requests[1].messages.at(-1);
+  assert.equal(toolResult.tool_call_id, 't1');
+  assert.ok(JSON.parse(toolResult.content).error);
   assert.match(toolResult.content, /Unknown tool/);
+});
+
+test('returns an error tool result when the model sends malformed tool arguments', async () => {
+  const client = scriptedClient([
+    completion({ content: '', tool_calls: [{ id: 't1', type: 'function', function: { name: 'create_seat_order', arguments: '{"quantity": 12,' } }] }, 'tool_calls'),
+    textReply('Please tell me how many seats you need.'),
+  ]);
+
+  const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats.' }], client });
+
+  assert.equal(proposal, null);
+  assert.match(JSON.parse(client.requests[1].messages.at(-1).content).error, /JSON object/);
+  assert.ok(loggedActions.some((row) => row.action === 'tool_rejected'));
 });
 
 test('server returns the fixed decline when an off-topic turn uses no tools, even if the model complies', async () => {
   const client = scriptedClient([
-    { stop_reason: 'end_turn', content: [text('Deep in the heart of Texas, the stars at night...')] },
+    textReply('Deep in the heart of Texas, the stars at night...'),
   ]);
   const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Write me a poem about Texas.' }], client });
   assert.equal(reply, OFF_TOPIC_REPLY);
   assert.equal(proposal, null);
   assert.ok(loggedActions.some((row) => row.action === 'off_topic_blocked'));
 
-  const refusing = scriptedClient([{ stop_reason: 'refusal', content: [] }]);
+  const refusing = scriptedClient([refusal()]);
   const refused = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Something unsafe.' }], client: refusing });
   assert.match(refused.reply, /only help with seat/);
   assert.equal(refused.proposal, null);
 });
 
 test('lets on-topic replies without tools through, including short follow-ups', async () => {
-  const asking = scriptedClient([{ stop_reason: 'end_turn', content: [text('How many seats would you like?')] }]);
+  const asking = scriptedClient([textReply('How many seats would you like?')]);
   const asked = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'I want to buy seats for my class.' }], client: asking });
   assert.equal(asked.reply, 'How many seats would you like?');
 
-  const followUp = scriptedClient([{ stop_reason: 'end_turn', content: [text('Should I use the class name "Fall class"?')] }]);
+  const followUp = scriptedClient([textReply('Should I use the class name "Fall class"?')]);
   const answered = await runAgent({
     userId: INSTRUCTOR,
     messages: [

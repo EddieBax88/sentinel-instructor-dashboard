@@ -75,7 +75,7 @@ export default function AgentPanel({ authHeaders, available }) {
       {error && <p className="notice" role="alert">{error}</p>}
       <form className="checkout-form" onSubmit={send}>
         <label className="sr-only" htmlFor="agent-input">Message the seat assistant</label>
-        <input id="agent-input" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={available ? 'Buy 12 seats for my fall class' : 'Add ANTHROPIC_API_KEY to .env'} maxLength="2000" disabled={!available || busy} />
+        <input id="agent-input" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={available ? 'Buy 12 seats for my fall class' : 'Add NVIDIA_API_KEY to .env'} maxLength="2000" disabled={!available || busy} />
         <button className="checkout-button" type="submit" disabled={!available || busy || !draft.trim()}>{busy ? 'Working…' : 'Send'}</button>
       </form>
     </section>

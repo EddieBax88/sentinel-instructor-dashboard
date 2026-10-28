@@ -1,11 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
-import { MAX_SEATS_PER_ORDER } from './config.js';
+import { AGENT_BASE_URL, AGENT_MODEL, MAX_SEATS_PER_ORDER } from './config.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, getOrdersForUser, seatsRemaining } from './seatUnlock.js';
 import { logAgentAction } from './supabase.js';
 
-export const AGENT_MODEL = 'claude-opus-5-5';
 const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
 const MAX_MESSAGES = 20;
@@ -24,23 +23,21 @@ create_seat_order does not charge anything or create a PayPal order. It prepares
 
 Reply in plain text, under 60 words.`;
 
-const TOOLS = [
+const TOOL_DEFINITIONS = [
   {
     name: 'get_seat_pricing',
     description: 'Returns the fixed price of one cohort seat, the currency, and the per-order seat limit.',
-    input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
-    strict: true,
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   },
   {
     name: 'get_current_seats',
     description: "Returns the default class size, seats sold and pending, seats remaining to reach the default class size, and the signed-in instructor's own seat orders.",
-    input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
-    strict: true,
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   },
   {
     name: 'create_seat_order',
     description: `Prepares a seat order proposal for the instructor to confirm. It does not create a PayPal order or charge anything. quantity is a whole number from 1 to ${MAX_SEATS_PER_ORDER}; class_name is a short label such as "Fall journeyman class".`,
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         quantity: { type: 'integer', description: `Number of seats, 1 to ${MAX_SEATS_PER_ORDER}.` },
@@ -49,22 +46,22 @@ const TOOLS = [
       required: ['quantity', 'class_name'],
       additionalProperties: false,
     },
-    strict: true,
   },
 ];
+const TOOLS = TOOL_DEFINITIONS.map((definition) => ({ type: 'function', function: definition }));
 
 const proposals = new Map();
 let defaultClient;
 
 export function isAgentConfigured() {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.NVIDIA_API_KEY);
 }
 
-function anthropicClient() {
+function nvidiaClient() {
   if (!isAgentConfigured()) {
-    throw Object.assign(new Error('Set ANTHROPIC_API_KEY in .env to enable the seat assistant.'), { statusCode: 503 });
+    throw Object.assign(new Error('Set NVIDIA_API_KEY in .env to enable the seat assistant.'), { statusCode: 503 });
   }
-  defaultClient ??= new Anthropic();
+  defaultClient ??= new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: AGENT_BASE_URL });
   return defaultClient;
 }
 
@@ -145,60 +142,74 @@ export function isSeatRequest(messages) {
 }
 
 function replyText(content) {
-  return content.filter((block) => block.type === 'text').map((block) => block.text).join('\n').trim();
+  return (content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
-// History arrives as text-only turns, so no thinking blocks are replayed across requests;
-// inside one request the loop appends each response unchanged.
-export async function runAgent({ userId, messages, client = anthropicClient() }) {
-  const conversation = validateMessages(messages);
-  const onTopic = isSeatRequest(conversation);
-  await logAgentAction({ userId, action: 'chat_request', details: { message: conversation.at(-1).content.slice(0, 500) } });
+function parseToolArguments(text) {
+  try {
+    const input = JSON.parse(text || '{}');
+    if (input && typeof input === 'object' && !Array.isArray(input)) return input;
+  } catch {
+    // fall through
+  }
+  throw Object.assign(new Error('Tool arguments must be a JSON object.'), { statusCode: 400 });
+}
+
+// History arrives as text-only turns; inside one request the loop appends each
+// assistant message unchanged, as the model's chat template expects.
+export async function runAgent({ userId, messages, client = nvidiaClient() }) {
+  const history = validateMessages(messages);
+  const onTopic = isSeatRequest(history);
+  const conversation = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
+  await logAgentAction({ userId, action: 'chat_request', details: { message: history.at(-1).content.slice(0, 500) } });
 
   let proposal = null;
   let reply = '';
   let usedTools = false;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const response = await client.beta.messages.create({
+    const response = await client.chat.completions.create({
       model: AGENT_MODEL,
-      max_tokens: 16000,
-      output_config: { effort: 'low' },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
       messages: conversation,
+      tools: TOOLS,
+      tool_choice: 'auto',
+      max_tokens: 16384,
+      temperature: 1,
+      top_p: 0.95,
+      // Required by NVIDIA's model card for this model to parse tool calls.
+      chat_template_kwargs: { enable_thinking: true, force_nonempty_content: true },
     });
 
-    if (response.stop_reason === 'refusal') {
+    const message = response.choices?.[0]?.message;
+    if (!message || message.refusal) {
       reply = OFF_TOPIC_REPLY;
       break;
     }
-    const toolUses = response.content.filter((block) => block.type === 'tool_use');
-    if (response.stop_reason !== 'tool_use' || toolUses.length === 0) {
-      reply = replyText(response.content);
+    const toolCalls = (message.tool_calls ?? []).filter((call) => call.type === 'function');
+    if (toolCalls.length === 0) {
+      reply = replyText(message.content);
       break;
     }
 
     usedTools = true;
-    conversation.push({ role: 'assistant', content: response.content });
-    const toolResults = [];
-    for (const toolUse of toolUses) {
+    conversation.push(message);
+    for (const toolCall of toolCalls) {
+      const { name } = toolCall.function;
+      let input = toolCall.function.arguments;
       try {
-        const outcome = await executeTool(toolUse.name, toolUse.input, { userId });
+        input = parseToolArguments(toolCall.function.arguments);
+        const outcome = await executeTool(name, input, { userId });
         if (outcome.proposal) proposal = outcome.proposal;
-        await logAgentAction({ userId, action: 'tool_call', details: { tool: toolUse.name, input: toolUse.input } });
-        toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(outcome.result) });
+        await logAgentAction({ userId, action: 'tool_call', details: { tool: name, input } });
+        conversation.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify(outcome.result) });
       } catch (error) {
-        await logAgentAction({ userId, action: 'tool_rejected', details: { tool: toolUse.name, input: toolUse.input, reason: error.message } });
-        toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: error.message, is_error: true });
+        await logAgentAction({ userId, action: 'tool_rejected', details: { tool: name, input, reason: error.message } });
+        conversation.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify({ error: error.message }) });
       }
     }
-    conversation.push({ role: 'user', content: toolResults });
   }
 
   if (!usedTools && !onTopic) {
-    await logAgentAction({ userId, action: 'off_topic_blocked', details: { message: conversation.at(-1).content.slice(0, 500) } });
+    await logAgentAction({ userId, action: 'off_topic_blocked', details: { message: history.at(-1).content.slice(0, 500) } });
     return { reply: OFF_TOPIC_REPLY, proposal: null };
   }
 

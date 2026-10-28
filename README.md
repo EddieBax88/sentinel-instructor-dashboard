@@ -17,8 +17,8 @@ Open `http://localhost:3000`. Add sandbox credentials to `.env` to enable the pu
 - `server/index.js` serves the dashboard and exposes checkout and dashboard endpoints.
 - `server/paypal.js` handles OAuth, Orders v2 create/capture, and sandbox webhook verification.
 - `server/webhook.js` verifies capture event signatures before processing them.
-- `server/config.js` holds the default class size (`DEFAULT_CLASS_SIZE`, 30) and the per-order seat limit (`MAX_SEATS_PER_ORDER`, 200).
-- `server/agent.js` runs the seat assistant: the Claude tool loop, guardrails, and confirm-before-order proposals.
+- `server/config.js` holds the default class size (`DEFAULT_CLASS_SIZE`, 30), the per-order seat limit (`MAX_SEATS_PER_ORDER`, 200), and the seat assistant's model and endpoint.
+- `server/agent.js` runs the seat assistant: the tool-calling loop, guardrails, and confirm-before-order proposals.
 - `server/supabase.js` validates checkout access tokens and persists PayPal orders and Sentinel Volt grants.
 - `server/seatUnlock.js` validates completed captures, counts seats sold and pending against the default class size, and records transactions.
 - `src/components/AgentPanel.jsx` is the seat assistant panel with the Confirm step.
@@ -42,7 +42,7 @@ The NEC lookup contains fictional sample labels and paraphrased navigation only;
 
 The dashboard has a seat assistant. A signed-in instructor types a request in plain English, such as "Buy 12 seats for my fall class."
 
-**Model and SDK.** The server calls Claude Opus 5.5 (`claude-opus-5-5`) through the official Anthropic TypeScript SDK (`@anthropic-ai/sdk`), with server-side refusal fallback enabled. Set `ANTHROPIC_API_KEY` in `.env`; the key never reaches the browser.
+**Model and SDK.** The server calls NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) on NVIDIA's hosted API (build.nvidia.com). It uses the `openai` npm client pointed at NVIDIA's OpenAI-compatible endpoint, `https://integrate.api.nvidia.com/v1`, with standard function calling. NVIDIA's model card documents tool calling for this model, and the requests send the `chat_template_kwargs` it requires for tool calls. Set `NVIDIA_API_KEY` in `.env`; the key never reaches the browser. The model name and endpoint live in `server/config.js`.
 
 **Tools.** The model can call three tools, all implemented in `server/agent.js` on top of the existing checkout code:
 
@@ -50,7 +50,7 @@ The dashboard has a seat assistant. A signed-in instructor types a request in pl
 - `get_current_seats`: the default class size, seats sold and pending, seats remaining to reach that size, and the signed-in instructor's own orders.
 - `create_seat_order(quantity, class_name)`: validates the request and prepares a proposal. It does not call PayPal.
 
-The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. It ships adapters for the OpenAI Agents SDK, LangChain, Vercel AI SDK, MCP, and Bedrock, not the Anthropic SDK, and its `create_order` tool takes order details from the model. Here the price is fixed on the server and every order goes through the existing `createSandboxOrder` path and `paypal_orders` insert.
+The PayPal Agent Toolkit (`@paypal/agent-toolkit`) was not used. Its `create_order` tool takes order details from the model, and its adapters target agent frameworks this server doesn't use. Here the price is fixed on the server and every order goes through the existing `createSandboxOrder` path and `paypal_orders` insert.
 
 **Why approval is required.** The model never creates an order or moves money. `create_seat_order` only returns a proposal showing quantity, unit price, and total. The order is created only when the instructor clicks **Confirm**, which calls `POST /api/agent/proposals/:id/confirm`. That creates the PayPal Sandbox order and returns the approval link. Payment is captured only after the instructor approves it on PayPal, and seats are granted only by the existing verified-capture path and `grant_sentinel_volt_access` function. A language model can misread a request, so a person checks the amount before anything is charged.
 
