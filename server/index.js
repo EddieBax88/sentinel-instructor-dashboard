@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
+import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
 import { authenticateSupabaseUser, isSupabaseConfigured, publicSupabaseConfiguration } from './supabase.js';
 import webhookRouter from './webhook.js';
@@ -28,7 +29,8 @@ app.use(express.json({
   },
 }));
 app.get('/api/dashboard', (_request, response) => {
-  response.json({ ...getDashboardState(), paymentAvailable: isPaypalConfigured() && isSupabaseConfigured() });
+  const paymentAvailable = isPaypalConfigured() && isSupabaseConfigured();
+  response.json({ ...getDashboardState(), paymentAvailable, agentAvailable: paymentAvailable && isAgentConfigured() });
 });
 
 app.get('/api/supabase-config', (_request, response) => {
@@ -53,6 +55,24 @@ app.post('/api/paypal/orders/:orderId/capture', async (request, response) => {
   try {
     const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
     response.json(await captureSandboxOrder(request.params.orderId, user.id));
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
+});
+
+app.post('/api/agent/chat', async (request, response) => {
+  try {
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    response.json(await runAgent({ userId: user.id, messages: request.body?.messages }));
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
+});
+
+app.post('/api/agent/proposals/:proposalId/confirm', async (request, response) => {
+  try {
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    response.status(201).json(await confirmProposal({ proposalId: request.params.proposalId, userId: user.id }));
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
   }

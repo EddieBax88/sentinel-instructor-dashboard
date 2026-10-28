@@ -13,7 +13,19 @@ const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
 const SEAT_PRICE = '49.00';
 const COHORT_ID = 'sentinel-fall-2026';
+export const MAX_SEATS_PER_ORDER = 200;
+export const SEAT_PRICING = Object.freeze({ unitPrice: SEAT_PRICE, currency: CURRENCY });
 let tokenCache;
+
+export function seatOrderTotal(quantity) {
+  return ((Math.round(Number(SEAT_PRICE) * 100) * quantity) / 100).toFixed(2);
+}
+
+export function assertSeatQuantity(quantity) {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_SEATS_PER_ORDER) {
+    throw Object.assign(new Error(`Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER}.`), { statusCode: 400 });
+  }
+}
 
 function configuration() {
   const { PAYPAL_CLIENT_ID, PAYPAL_SECRET } = process.env;
@@ -101,7 +113,7 @@ async function getAccessToken() {
   return tokenCache.value;
 }
 
-export async function createSandboxOrder({ studentName, userId }) {
+export async function createSandboxOrder({ studentName, userId, quantity = 1 }) {
   const normalizedName = typeof studentName === 'string' ? studentName.trim().slice(0, 80) : '';
   if (!normalizedName) {
     throw Object.assign(new Error('Enter a student name before starting checkout.'), { statusCode: 400 });
@@ -109,7 +121,9 @@ export async function createSandboxOrder({ studentName, userId }) {
   if (!userId) {
     throw Object.assign(new Error('A verified Supabase account is required to start checkout.'), { statusCode: 401 });
   }
-  assertSeatAvailable();
+  assertSeatQuantity(quantity);
+  assertSeatAvailable(quantity);
+  const total = seatOrderTotal(quantity);
 
   const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
   const order = await paypalFetch('/v2/checkout/orders', {
@@ -121,18 +135,18 @@ export async function createSandboxOrder({ studentName, userId }) {
         reference_id: COHORT_ID,
         custom_id: userId,
         invoice_id: `SENTINEL-${randomUUID()}`,
-        description: 'One instructor course seat',
+        description: quantity === 1 ? 'One instructor course seat' : `${quantity} instructor course seats`,
         amount: {
           currency_code: CURRENCY,
-          value: SEAT_PRICE,
+          value: total,
           breakdown: {
-            item_total: { currency_code: CURRENCY, value: SEAT_PRICE },
+            item_total: { currency_code: CURRENCY, value: total },
           },
         },
         items: [{
           name: 'Course seat',
           description: 'One seat in the Sentinel Fall 2026 cohort',
-          quantity: '1',
+          quantity: String(quantity),
           unit_amount: { currency_code: CURRENCY, value: SEAT_PRICE },
           category: 'DIGITAL_GOODS',
         }],
@@ -168,7 +182,8 @@ export async function createSandboxOrder({ studentName, userId }) {
     userId,
     studentName: normalizedName,
     cohortId: COHORT_ID,
-    amount: SEAT_PRICE,
+    quantity,
+    amount: total,
     currency: CURRENCY,
   };
   recordPendingOrder(pendingOrder);
@@ -178,7 +193,7 @@ export async function createSandboxOrder({ studentName, userId }) {
     discardPendingOrder(order.id);
     throw error;
   }
-  return { orderId: order.id, approvalUrl: approvalUrl.toString() };
+  return { orderId: order.id, approvalUrl: approvalUrl.toString(), quantity, amount: total, currency: CURRENCY };
 }
 
 export async function captureSandboxOrder(orderId, userId) {

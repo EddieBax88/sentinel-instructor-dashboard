@@ -10,6 +10,7 @@
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@supabase/supabase-js": "^2.118.0",
     "ag-grid-community": "*",
     "ag-grid-react": "*",

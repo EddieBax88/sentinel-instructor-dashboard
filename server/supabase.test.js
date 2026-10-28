@@ -59,6 +59,7 @@ test('persists account association for a created PayPal order', async () => {
       paypal_order_id: 'ORDER-1',
       user_id: 'user-123',
       student_name: 'Avery',
+      quantity: 1,
       amount: '49.00',
       currency: 'USD',
       status: 'PENDING',

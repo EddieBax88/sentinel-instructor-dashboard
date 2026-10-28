@@ -7,10 +7,23 @@ export const COHORT = Object.freeze({
 const pendingOrders = new Map();
 const transactions = new Map();
 
-export function assertSeatAvailable() {
-  const reservedSeats = pendingOrders.size;
-  if (transactions.size + reservedSeats >= COHORT.capacity) {
+function seatCount(orders) {
+  let seats = 0;
+  for (const order of orders.values()) seats += order.quantity ?? 1;
+  return seats;
+}
+
+export function seatsAvailable() {
+  return COHORT.capacity - seatCount(transactions) - seatCount(pendingOrders);
+}
+
+export function assertSeatAvailable(quantity = 1) {
+  const available = seatsAvailable();
+  if (available <= 0) {
     throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
+  }
+  if (quantity > available) {
+    throw Object.assign(new Error(`Only ${available} of ${COHORT.capacity} cohort seats are available.`), { statusCode: 409 });
   }
 }
 
@@ -19,8 +32,9 @@ export function recordPendingOrder(order) {
     throw new Error('Pending orders must include an order, student, and fixed price.');
   }
   if (pendingOrders.has(order.orderId) || transactions.has(order.orderId)) return;
-  assertSeatAvailable();
-  pendingOrders.set(order.orderId, { ...order, status: 'PENDING', createdAt: new Date().toISOString() });
+  const quantity = order.quantity ?? 1;
+  assertSeatAvailable(quantity);
+  pendingOrders.set(order.orderId, { ...order, quantity, status: 'PENDING', createdAt: new Date().toISOString() });
 }
 
 export function getPendingOrder(orderId) {
@@ -47,7 +61,7 @@ export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amo
   if (amount !== order.amount || currency !== order.currency) {
     throw Object.assign(new Error('Capture amount or currency does not match the pending seat order.'), { statusCode: 409 });
   }
-  if (transactions.size >= COHORT.capacity) {
+  if (seatCount(transactions) + order.quantity > COHORT.capacity) {
     throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
   }
 
@@ -57,6 +71,7 @@ export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amo
     userId: order.userId,
     studentName: order.studentName,
     cohortId: order.cohortId,
+    quantity: order.quantity,
     amount,
     currency,
     status: 'COMPLETED',
@@ -67,6 +82,12 @@ export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amo
   pendingOrders.delete(orderId);
   console.info(`Seat unlocked: cohort=${order.cohortId} order=${orderId} capture=${captureId} source=${source}`);
   return transaction;
+}
+
+export function getOrdersForUser(userId) {
+  return [...pendingOrders.values(), ...transactions.values()]
+    .filter((order) => order.userId === userId)
+    .map(({ orderId, studentName, quantity, amount, currency, status }) => ({ orderId, name: studentName, quantity, amount, currency, status }));
 }
 
 export function getDashboardState() {
@@ -97,9 +118,9 @@ export function getDashboardState() {
       id: COHORT.id,
       cohort: COHORT.name,
       capacity: COHORT.capacity,
-      seatsSold: completed.length,
-      seatsReserved: orders.length,
-      seatsAvailable: COHORT.capacity - completed.length - orders.length,
+      seatsSold: seatCount(transactions),
+      seatsReserved: seatCount(pendingOrders),
+      seatsAvailable: seatsAvailable(),
     }],
     students,
   };

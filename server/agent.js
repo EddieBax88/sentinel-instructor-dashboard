@@ -1,0 +1,215 @@
+import Anthropic from '@anthropic-ai/sdk';
+import { randomUUID } from 'node:crypto';
+import { assertSeatQuantity, createSandboxOrder, MAX_SEATS_PER_ORDER, SEAT_PRICING, seatOrderTotal } from './paypal.js';
+import { assertSeatAvailable, COHORT, getOrdersForUser, seatsAvailable } from './seatUnlock.js';
+import { logAgentAction } from './supabase.js';
+
+export const AGENT_MODEL = 'claude-opus-5-5';
+const PROPOSAL_TTL_MS = 10 * 60 * 1000;
+const MAX_TOOL_ROUNDS = 6;
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_LENGTH = 2000;
+const OFF_TOPIC_REPLY = 'I can only help with seat pricing, seat availability, and buying cohort seats.';
+
+const SYSTEM_PROMPT = `You are the seat-purchasing assistant on the Sentinel instructor dashboard. A signed-in instructor uses you to buy seats in their cohort through PayPal Sandbox.
+
+You can do three things: report seat pricing, report seat availability and the instructor's own seat orders, and prepare a seat order for the instructor to confirm. If a request is about anything else, decline in one sentence and say what you can help with. Do not answer general questions, write other content, or discuss other products.
+
+When the instructor asks to buy seats, call get_seat_pricing and get_current_seats, then call create_seat_order with the quantity and a short class name. If they did not give a quantity, ask for one. Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER} and cannot exceed the seats available.
+
+create_seat_order does not charge anything or create a PayPal order. It prepares a proposal, and nothing is ordered until the instructor clicks Confirm on the dashboard. After it succeeds, state the quantity, unit price, and total from the tool result and tell the instructor to click Confirm to continue to PayPal. Never say an order was placed or paid.
+
+Reply in plain text, under 60 words.`;
+
+const TOOLS = [
+  {
+    name: 'get_seat_pricing',
+    description: 'Returns the fixed price of one cohort seat, the currency, and the per-order seat limit.',
+    input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: 'get_current_seats',
+    description: "Returns the cohort's capacity and available seats, plus the signed-in instructor's own seat orders.",
+    input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    strict: true,
+  },
+  {
+    name: 'create_seat_order',
+    description: `Prepares a seat order proposal for the instructor to confirm. It does not create a PayPal order or charge anything. quantity is a whole number from 1 to ${MAX_SEATS_PER_ORDER}; class_name is a short label such as "Fall journeyman class".`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        quantity: { type: 'integer', description: `Number of seats, 1 to ${MAX_SEATS_PER_ORDER}.` },
+        class_name: { type: 'string', description: 'Short class label, at most 80 characters.' },
+      },
+      required: ['quantity', 'class_name'],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+];
+
+const proposals = new Map();
+let defaultClient;
+
+export function isAgentConfigured() {
+  return Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+function anthropicClient() {
+  if (!isAgentConfigured()) {
+    throw Object.assign(new Error('Set ANTHROPIC_API_KEY in .env to enable the seat assistant.'), { statusCode: 503 });
+  }
+  defaultClient ??= new Anthropic();
+  return defaultClient;
+}
+
+export function validateSeatRequest({ quantity, class_name: className }) {
+  assertSeatQuantity(quantity);
+  const normalizedName = typeof className === 'string' ? className.trim() : '';
+  if (!normalizedName || normalizedName.length > 80) {
+    throw Object.assign(new Error('Class name must be 1 to 80 characters.'), { statusCode: 400 });
+  }
+  assertSeatAvailable(quantity);
+  return { quantity, className: normalizedName };
+}
+
+function publicProposal({ id, quantity, className, unitPrice, total, currency, expiresAt }) {
+  return { id, quantity, className, unitPrice, total, currency, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+export async function executeTool(name, input, { userId }) {
+  if (name === 'get_seat_pricing') {
+    return { result: { ...SEAT_PRICING, maxSeatsPerOrder: MAX_SEATS_PER_ORDER } };
+  }
+  if (name === 'get_current_seats') {
+    return {
+      result: {
+        cohort: COHORT.name,
+        capacity: COHORT.capacity,
+        seatsAvailable: seatsAvailable(),
+        yourOrders: getOrdersForUser(userId),
+      },
+    };
+  }
+  if (name === 'create_seat_order') {
+    const { quantity, className } = validateSeatRequest(input ?? {});
+    const proposal = {
+      id: randomUUID(),
+      userId,
+      quantity,
+      className,
+      unitPrice: SEAT_PRICING.unitPrice,
+      total: seatOrderTotal(quantity),
+      currency: SEAT_PRICING.currency,
+      expiresAt: Date.now() + PROPOSAL_TTL_MS,
+    };
+    proposals.set(proposal.id, proposal);
+    await logAgentAction({ userId, action: 'order_proposed', details: { proposalId: proposal.id, quantity, className, total: proposal.total } });
+    return {
+      result: { ...publicProposal(proposal), status: 'AWAITING_INSTRUCTOR_CONFIRMATION' },
+      proposal: publicProposal(proposal),
+    };
+  }
+  throw Object.assign(new Error(`Unknown tool: ${name}`), { statusCode: 400 });
+}
+
+function validateMessages(messages) {
+  const valid = Array.isArray(messages)
+    && messages.length > 0
+    && messages.length <= MAX_MESSAGES
+    && messages.every(({ role, content }) => ['user', 'assistant'].includes(role)
+      && typeof content === 'string'
+      && content.trim().length > 0
+      && content.length <= MAX_MESSAGE_LENGTH)
+    && messages[0].role === 'user'
+    && messages.at(-1).role === 'user';
+  if (!valid) {
+    throw Object.assign(new Error(`Send 1 to ${MAX_MESSAGES} text messages of at most ${MAX_MESSAGE_LENGTH} characters, ending with yours.`), { statusCode: 400 });
+  }
+  return messages.map(({ role, content }) => ({ role, content }));
+}
+
+function replyText(content) {
+  return content.filter((block) => block.type === 'text').map((block) => block.text).join('\n').trim();
+}
+
+// History arrives as text-only turns, so no thinking blocks are replayed across requests;
+// inside one request the loop appends each response unchanged.
+export async function runAgent({ userId, messages, client = anthropicClient() }) {
+  const conversation = validateMessages(messages);
+  await logAgentAction({ userId, action: 'chat_request', details: { message: conversation.at(-1).content.slice(0, 500) } });
+
+  let proposal = null;
+  let reply = '';
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const response = await client.beta.messages.create({
+      model: AGENT_MODEL,
+      max_tokens: 16000,
+      output_config: { effort: 'low' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system: SYSTEM_PROMPT,
+      tools: TOOLS,
+      messages: conversation,
+    });
+
+    if (response.stop_reason === 'refusal') {
+      reply = OFF_TOPIC_REPLY;
+      break;
+    }
+    const toolUses = response.content.filter((block) => block.type === 'tool_use');
+    if (response.stop_reason !== 'tool_use' || toolUses.length === 0) {
+      reply = replyText(response.content);
+      break;
+    }
+
+    conversation.push({ role: 'assistant', content: response.content });
+    const toolResults = [];
+    for (const toolUse of toolUses) {
+      try {
+        const outcome = await executeTool(toolUse.name, toolUse.input, { userId });
+        if (outcome.proposal) proposal = outcome.proposal;
+        await logAgentAction({ userId, action: 'tool_call', details: { tool: toolUse.name, input: toolUse.input } });
+        toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(outcome.result) });
+      } catch (error) {
+        await logAgentAction({ userId, action: 'tool_rejected', details: { tool: toolUse.name, input: toolUse.input, reason: error.message } });
+        toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: error.message, is_error: true });
+      }
+    }
+    conversation.push({ role: 'user', content: toolResults });
+  }
+
+  reply ||= proposal
+    ? `Ready to order ${proposal.quantity} seats at ${proposal.currency} ${proposal.unitPrice} each, ${proposal.currency} ${proposal.total} total. Click Confirm to continue to PayPal.`
+    : 'I could not finish that request. Please try again.';
+  await logAgentAction({ userId, action: 'agent_reply', details: { proposalId: proposal?.id ?? null } });
+  return { reply, proposal };
+}
+
+export async function confirmProposal({ proposalId, userId }) {
+  const proposal = proposals.get(proposalId);
+  if (!proposal || proposal.expiresAt < Date.now()) {
+    proposals.delete(proposalId);
+    throw Object.assign(new Error('This seat proposal expired or does not exist. Ask the assistant again.'), { statusCode: 404 });
+  }
+  if (proposal.userId !== userId) {
+    await logAgentAction({ userId, action: 'confirm_rejected', details: { proposalId, reason: 'different account' } });
+    throw Object.assign(new Error('This seat proposal belongs to a different account.'), { statusCode: 403 });
+  }
+
+  proposals.delete(proposalId);
+  try {
+    const order = await createSandboxOrder({ studentName: proposal.className, userId, quantity: proposal.quantity });
+    await logAgentAction({ userId, action: 'order_created', details: { proposalId, orderId: order.orderId, quantity: order.quantity, total: order.amount } });
+    return order;
+  } catch (error) {
+    await logAgentAction({ userId, action: 'order_failed', details: { proposalId, reason: error.message } });
+    throw error;
+  }
+}
+
+export function resetAgentState() {
+  proposals.clear();
+}

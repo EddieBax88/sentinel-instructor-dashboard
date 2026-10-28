@@ -1,6 +1,7 @@
 import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
+import AgentPanel from './components/AgentPanel.jsx';
 import NecDemo from './components/NecDemo.jsx';
 import SeatTable from './components/SeatTable.jsx';
 
@@ -11,7 +12,7 @@ async function readResponse(response) {
 }
 
 export default function App() {
-  const [dashboard, setDashboard] = useState({ transactions: [], quotas: [], students: [], paymentAvailable: false });
+  const [dashboard, setDashboard] = useState({ transactions: [], quotas: [], students: [], paymentAvailable: false, agentAvailable: false });
   const [studentName, setStudentName] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -167,6 +168,7 @@ export default function App() {
           )}
         </section>
         {notice && <p className="notice" role="status">{notice}</p>}
+        {session && <AgentPanel authHeaders={authHeaders} available={dashboard.agentAvailable} />}
 
         <section id="seat-ledger" className="ledger-section">
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>

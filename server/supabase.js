@@ -67,7 +67,7 @@ export async function authenticateSupabaseUser(accessToken) {
   return { id: user.id };
 }
 
-export async function savePaypalOrder({ orderId, userId, studentName, amount, currency }) {
+export async function savePaypalOrder({ orderId, userId, studentName, quantity = 1, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
   const response = await fetch(`${baseUrl}/rest/v1/paypal_orders`, {
     method: 'POST',
@@ -76,6 +76,7 @@ export async function savePaypalOrder({ orderId, userId, studentName, amount, cu
       paypal_order_id: orderId,
       user_id: userId,
       student_name: studentName,
+      quantity,
       amount,
       currency,
       status: 'PENDING',
@@ -125,5 +126,19 @@ export async function grantSentinelVoltAccess({ userId, orderId, captureId, stat
   if (!response.ok) {
     await readJson(response);
     throw Object.assign(new Error(`Supabase could not grant Sentinel Volt access (${response.status}).`), { statusCode: 502 });
+  }
+}
+
+export async function logAgentAction({ userId, action, details = {} }) {
+  try {
+    const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+    const response = await fetch(`${baseUrl}/rest/v1/agent_actions`, {
+      method: 'POST',
+      headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
+      body: JSON.stringify({ user_id: userId, action, details }),
+    });
+    if (!response.ok) console.warn(`Agent action "${action}" was not logged (Supabase ${response.status}).`);
+  } catch (error) {
+    console.warn(`Agent action "${action}" was not logged: ${error.message}`);
   }
 }
