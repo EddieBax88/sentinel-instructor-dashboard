@@ -92,7 +92,7 @@ export async function savePaypalOrder({ orderId, userId, studentName, quantity =
 export async function getPaypalOrder(orderId) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
   const query = new URLSearchParams({
-    select: 'paypal_order_id,user_id,student_name,amount,currency,status',
+    select: 'paypal_order_id,user_id,student_name,quantity,amount,currency,status,paypal_payments(capture_id)',
     paypal_order_id: `eq.${orderId}`,
     limit: '1',
   });
@@ -104,7 +104,7 @@ export async function getPaypalOrder(orderId) {
     throw Object.assign(new Error(`Could not read the PayPal order from Supabase (${response.status}).`), { statusCode: 502 });
   }
   if (!Array.isArray(rows) || !rows[0]) {
-    throw Object.assign(new Error('No Sentinel Learning account is associated with this PayPal order.'), { statusCode: 503 });
+    throw Object.assign(new Error('No seat order matches this PayPal order.'), { statusCode: 404 });
   }
   return rows[0];
 }

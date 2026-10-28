@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, replyText, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
 import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
-import { getDashboardState, recordPendingOrder, resetSeatState } from './seatUnlock.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
 const OTHER_INSTRUCTOR = '00000000-0000-4000-8000-00000000000b';
@@ -22,7 +21,10 @@ function fakeFetch(paypalHandler) {
       return new Response(null, { status: 201 });
     }
     if (hostname === 'example.supabase.co' && pathname === '/rest/v1/paypal_orders') {
-      if (options.method === 'POST') return new Response(null, { status: 201 });
+      if (options.method === 'POST') {
+        storedOrders.push(JSON.parse(options.body));
+        return new Response(null, { status: 201 });
+      }
       const userFilter = new URL(url).searchParams.get('user_id');
       orderQueries.push(userFilter);
       return Response.json(storedOrders.filter((row) => `eq.${row.user_id}` === userFilter));
@@ -60,7 +62,6 @@ const textReply = (content) => completion({ content }, 'stop');
 const refusal = () => completion({ content: null, refusal: 'Declined.' }, 'stop');
 
 test.beforeEach(() => {
-  resetSeatState();
   resetAgentState();
   loggedActions = [];
   paypalRequests = [];
@@ -93,7 +94,6 @@ test("get_current_seats reads the caller's own orders from Supabase, not server 
     { paypal_order_id: 'ORDER-A', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 3, amount: 147, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T10:00:00Z', paypal_payments: [] },
     { paypal_order_id: 'ORDER-B', user_id: OTHER_INSTRUCTOR, student_name: 'Other class', quantity: 2, amount: 98, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T11:00:00Z', paypal_payments: [] },
   ];
-  resetSeatState();
 
   const { result } = await executeTool('get_current_seats', {}, { userId: INSTRUCTOR });
   assert.deepEqual(orderQueries, [`eq.${INSTRUCTOR}`]);
@@ -115,10 +115,12 @@ test('allows any order of 1-200 seats with no class-size cap', async () => {
   assert.deepEqual(validateSeatRequest({ quantity: 1, class_name: ' Fall class ' }), { quantity: 1, className: 'Fall class' });
   assert.deepEqual(validateSeatRequest({ quantity: 200, class_name: 'Fall class' }), { quantity: 200, className: 'Fall class' });
 
-  recordPendingOrder({ orderId: 'ORDER-BIG', userId: INSTRUCTOR, studentName: 'Fall class', quantity: 200, cohortId: 'cohort', amount: '9800.00', currency: 'USD' });
+  storedOrders = [{ paypal_order_id: 'ORDER-BIG', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 200, amount: 9800, currency: 'USD', status: 'PENDING', paypal_payments: [] }];
   const { proposal } = await executeTool('create_seat_order', { quantity: 200, class_name: 'Spring class' }, { userId: INSTRUCTOR });
   assert.equal(proposal.total, '9800.00');
-  assert.equal(getDashboardState().quotas[0].seatsRemaining, 0);
+  const { result } = await executeTool('get_current_seats', {}, { userId: INSTRUCTOR });
+  assert.equal(result.seatsPending, 200);
+  assert.equal(result.seatsRemaining, 0);
 });
 
 test('runs the tool loop and returns a proposal without creating a PayPal order', async () => {
@@ -136,7 +138,6 @@ test('runs the tool loop and returns a proposal without creating a PayPal order'
   assert.equal(proposal.total, '588.00');
   assert.equal(proposal.className, 'Fall class');
   assert.equal(paypalRequests.length, 0);
-  assert.equal(getDashboardState().quotas[0].seatsReserved, 0);
 
   const [firstRequest] = client.requests;
   assert.equal(firstRequest.model, AGENT_MODEL);
@@ -290,7 +291,9 @@ test('only the proposing instructor can confirm, once, and confirmation creates 
   assert.equal(orderRequest.purchase_units[0].custom_id, INSTRUCTOR);
   assert.equal(orderRequest.purchase_units[0].amount.value, '588.00');
   assert.equal(orderRequest.purchase_units[0].items[0].quantity, '12');
-  assert.equal(getDashboardState().quotas[0].seatsReserved, 12);
+  assert.deepEqual(storedOrders.map(({ paypal_order_id: orderId, user_id: userId, quantity, amount, status }) => ({ orderId, userId, quantity, amount, status })), [
+    { orderId: 'ORDER-12', userId: INSTRUCTOR, quantity: 12, amount: '588.00', status: 'PENDING' },
+  ]);
 
   await assert.rejects(confirmProposal({ proposalId: proposal.id, userId: INSTRUCTOR }), { statusCode: 404 });
   assert.deepEqual(loggedActions.map((row) => row.action), ['order_proposed', 'confirm_rejected', 'order_created']);
