@@ -22,6 +22,8 @@ Open `http://localhost:3000`. Add sandbox credentials to `.env` to enable the pu
 - `server/supabase.js` validates checkout access tokens and persists PayPal orders and seat grants.
 - `server/seatUnlock.js` validates completed captures, counts seats sold and pending against the default class size, and records transactions.
 - `src/components/AgentPanel.jsx` is the seat assistant panel with the Confirm step.
+- `server/analytics.js` serves `GET /api/analytics/orders`, the signed-in instructor's orders shaped for AG Studio.
+- `src/components/InstructorAnalytics.jsx` renders the Instructor analytics view with AG Studio; its data source, default report, theme, and custom widgets are in `src/analytics/`.
 - `src/components/SeatTable.jsx` shows transactions, class seats, and student readiness.
 
 ## Sandbox checkout
@@ -34,6 +36,16 @@ The server uses the PayPal Checkout Orders v2 API through the APIMatic-documente
 Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` to sandbox app credentials in the ignored `.env` file. Set `PAYPAL_WEBHOOK_ID` to the sandbox webhook subscription ID to enable webhook verification. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`; the service-role key must remain server-side. Apply the migration in `supabase/migrations` before enabling checkout. Order-creation and capture requests must send the signed-in Supabase access token as `Authorization: Bearer <access-token>`. The server validates the token with Supabase Auth and stores the resulting user ID in the PayPal order; it never accepts a caller-supplied user ID. The server uses only `https://api-m.sandbox.paypal.com`; seat price (`USD 49.00`) and the per-order limit (1 to 200 seats) are fixed server-side. There is no cohort-wide seat cap. Seats are granted only for a completed capture with the expected amount and currency, either from the Orders API response or a cryptographically verified `PAYMENT.CAPTURE.COMPLETED` webhook.
 
 The durable PayPal-order association and seat grants are stored in Supabase. The dashboard ledger (transactions, class seats, student readiness) is read from Supabase `paypal_orders` through `GET /api/ledger`, which requires the signed-in access token and returns only that instructor's orders; the server applies the user filter with the secret key, so the browser never chooses whose orders it sees. Pending seats count by order quantity. Capture and the PayPal webhook also read the order from Supabase, so both work after a server restart. A capture is accepted only for the signed-in owner of the order and only if the amount equals USD 49.00 × quantity. The seat grant function marks the order completed and writes `paypal_payments` in one transaction, and returns without granting again for a capture it has already recorded, so duplicate captures and webhooks are no-ops. The server keeps no order state in memory. PayPal webhook delivery requires a publicly reachable HTTPS URL, so local webhooks need a secure forwarding/tunnel setup.
+
+## Instructor analytics (AG Studio)
+
+The **Instructor analytics** link in the sidebar opens an [AG Studio](https://www.ag-grid.com/studio/) report over the signed-in instructor's own seat orders: revenue, seats unlocked vs pending, seats and order value by day, and orders by class. **Edit layout** switches Studio to edit mode to add or change widgets; changes last until the page reloads.
+
+- **Data.** `GET /api/analytics/orders` requires the signed-in Supabase access token. The server reads `paypal_orders` filtered to the user ID from the verified token, never from the request, and returns plain numbers and ISO dates with seats and money already split by status.
+- **Custom widgets** (`src/analytics/widgets.jsx`): **Revenue Tile**, a large money value with a supporting number, and **Seat Progress**, unlocked and pending seats as a bar against the default class size (`DEFAULT_CLASS_SIZE` in `server/config.js`, passed to Studio as context). Both appear under **Instructor** in the widget menu.
+- **Theme** (`src/analytics/theme.js`): Studio's theme points at the dashboard's CSS tokens in `src/styles.css`, so widgets, grids, and charts match the rest of the page.
+- **Versions.** AG Studio 3.0.0 requires AG Grid 36.2 and AG Charts 14.2, so `ag-studio`, `ag-studio-react`, `ag-grid-community`, and `ag-grid-react` are pinned to exact versions.
+- **Licence.** No key is configured. AG Studio runs locally without one and shows a watermark and console warnings.
 
 ## How AI is used
 

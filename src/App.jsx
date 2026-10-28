@@ -1,10 +1,13 @@
 import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AgentPanel from './components/AgentPanel.jsx';
 import SeatTable from './components/SeatTable.jsx';
 
 const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
+// AG Studio is large, so it loads only when the analytics view opens.
+const InstructorAnalytics = lazy(() => import('./components/InstructorAnalytics.jsx'));
+const viewFromHash = () => (window.location.hash === '#analytics' ? 'analytics' : 'dashboard');
 
 async function readResponse(response) {
   const payload = await response.json();
@@ -22,6 +25,7 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [ledgerVersion, setLedgerVersion] = useState(0);
+  const [view, setView] = useState(viewFromHash);
   const processedOrder = useRef('');
   const accessToken = session?.access_token;
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
@@ -101,6 +105,12 @@ export default function App() {
   }, [orderFromReturn, accessToken]);
 
   useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
     if (cancelledCheckout) setNotice('Checkout was cancelled. No seat was changed.');
   }, [cancelledCheckout]);
 
@@ -130,8 +140,9 @@ export default function App() {
           <span className="brand-icon"><GraduationCap size={20} /></span><span>sentinel<span className="brand-period">.</span></span>
         </a>
         <div className="rail-label">INSTRUCTOR</div>
-        <a className="rail-link active" href="#overview">Overview</a>
+        <a className={`rail-link${view === 'dashboard' ? ' active' : ''}`} href="#overview">Overview</a>
         <a className="rail-link" href="#seat-ledger">Seat ledger</a>
+        <a className={`rail-link${view === 'analytics' ? ' active' : ''}`} href="#analytics">Instructor analytics</a>
         <div className="rail-bottom"><ShieldCheck size={16} /><span>Sandbox environment</span></div>
       </aside>
 
@@ -141,6 +152,18 @@ export default function App() {
           <span className="sandbox-chip"><i />PAYPAL SANDBOX</span>
         </header>
 
+        {view === 'analytics' ? (
+          accessToken ? (
+            <Suspense fallback={<div className="grid-empty">Loading analytics…</div>}>
+              <InstructorAnalytics accessToken={accessToken} />
+            </Suspense>
+          ) : (
+            <section id="analytics" className="analytics-section">
+              <div className="section-title"><div><p className="eyebrow">YOUR ORDERS ONLY</p><h2>Instructor analytics</h2></div></div>
+              <p className="notice">Sign in on the <a href="#overview">Overview</a> page to see analytics for your orders.</p>
+            </section>
+          )
+        ) : (<>
         <section id="overview" className="intro">
           <div>
             <p className="eyebrow">FALL 2026 COHORT</p>
@@ -179,6 +202,7 @@ export default function App() {
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>
           <SeatTable transactions={dashboard.transactions} quotas={dashboard.quotas} students={dashboard.students} />
         </section>
+        </>)}
         <footer>Payments route only to PayPal Sandbox. Seat counts update only after a completed, verified capture.</footer>
       </main>
     </div>

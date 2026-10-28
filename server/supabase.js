@@ -46,6 +46,14 @@ async function readJson(response) {
   return response.json().catch(() => ({}));
 }
 
+export function getBearerToken(authorization) {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization || '');
+  if (!match) {
+    throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
+  }
+  return match[1];
+}
+
 export async function authenticateSupabaseUser(accessToken) {
   if (!accessToken) {
     throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
