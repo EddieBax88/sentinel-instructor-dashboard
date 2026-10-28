@@ -1,3 +1,6 @@
+-- Safe to re-run: every statement is idempotent, and the file runs as one transaction.
+begin;
+
 -- Multi-seat orders: one PayPal order can now cover 1-200 seats at the fixed USD 49.00 seat price.
 alter table public.paypal_orders
   add column if not exists quantity integer not null default 1;
@@ -19,13 +22,18 @@ alter table public.paypal_payments
 create table if not exists public.agent_actions (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users (id) on delete cascade,
-  action text not null check (action in (
-    'chat_request', 'tool_call', 'tool_rejected', 'order_proposed',
-    'agent_reply', 'off_topic_blocked', 'confirm_rejected', 'order_created', 'order_failed'
-  )),
+  action text not null,
   details jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+-- Kept outside create table so a re-run also updates a table created by an earlier version.
+alter table public.agent_actions drop constraint if exists agent_actions_action_check;
+alter table public.agent_actions
+  add constraint agent_actions_action_check check (action in (
+    'chat_request', 'tool_call', 'tool_rejected', 'order_proposed',
+    'agent_reply', 'off_topic_blocked', 'confirm_rejected', 'order_created', 'order_failed'
+  ));
 
 create index if not exists agent_actions_user_id_created_at_idx
   on public.agent_actions (user_id, created_at desc);
@@ -34,6 +42,7 @@ alter table public.agent_actions enable row level security;
 
 grant select on public.agent_actions to authenticated;
 
+drop policy if exists "Instructors can read their own agent actions" on public.agent_actions;
 create policy "Instructors can read their own agent actions"
   on public.agent_actions
   for select
@@ -114,3 +123,5 @@ $$;
 
 revoke all on function public.grant_sentinel_volt_access(uuid, text, text, text, numeric, text) from public, anon, authenticated;
 grant execute on function public.grant_sentinel_volt_access(uuid, text, text, text, numeric, text) to service_role;
+
+commit;
