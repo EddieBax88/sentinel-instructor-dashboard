@@ -3,6 +3,21 @@ import { AgGridReact } from 'ag-grid-react';
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
+// Theming API params (the grid ignores legacy --ag-* CSS variables when a theme object is set).
+const gridTheme = themeQuartz.withParams({
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: 10,
+  headerFontSize: 9,
+  headerBackgroundColor: '#f8faf8',
+  headerTextColor: '#7c8880',
+  borderColor: '#edf1ed',
+  rowBorder: { color: '#edf1ed' },
+  headerHeight: 32,
+  rowHeight: 34,
+  wrapperBorder: false,
+  wrapperBorderRadius: 0,
+});
+
 const defaultColDef = { flex: 1, minWidth: 112, sortable: true, resizable: true };
 const transactionColumns = [
   { field: 'studentName', headerName: 'STUDENT', minWidth: 150 },
@@ -28,7 +43,7 @@ const studentColumns = [
 function GridTable({ rows, columns, emptyText }) {
   return rows.length ? (
     <div className="grid-frame">
-      <AgGridReact rowData={rows} columnDefs={columns} defaultColDef={defaultColDef} theme={themeQuartz} domLayout="autoHeight" />
+      <AgGridReact rowData={rows} columnDefs={columns} defaultColDef={defaultColDef} theme={gridTheme} domLayout="autoHeight" />
     </div>
   ) : <div className="grid-empty">{emptyText}</div>;
 }

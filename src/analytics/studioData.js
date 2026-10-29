@@ -4,20 +4,32 @@
 const CALENDAR_ID = 'calendar';
 const USD = { format: new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }) };
 
-// [id, name, format, hide?]
+// [id, name, format, hide?]. Per-order numbers are hidden: the named measures below are what
+// widgets use, so legends and headers read "Revenue" rather than "Revenue (sum)".
 const ORDER_FIELDS = [
   ['orderId', 'Order ID', 'textFormat', true],
   ['className', 'Class', 'textFormat'],
   ['status', 'Seat Status', 'textFormat'],
   ['currency', 'Currency', 'textFormat', true],
-  ['seats', 'Seats Ordered', 'integerFormat'],
-  ['seatsUnlocked', 'Seats Unlocked', 'integerFormat'],
-  ['seatsPending', 'Seats Pending', 'integerFormat'],
-  ['amount', 'Order Total', 'currencyFormat'],
-  ['revenue', 'Revenue', 'currencyFormat'],
-  ['pendingAmount', 'Awaiting Payment', 'currencyFormat'],
+  ['seats', 'Seats per Order', 'integerFormat', true],
+  ['seatsUnlocked', 'Unlocked per Order', 'integerFormat', true],
+  ['seatsPending', 'Pending per Order', 'integerFormat', true],
+  ['amount', 'Order Amount', 'currencyFormat', true],
+  ['revenue', 'Captured Amount', 'currencyFormat', true],
+  ['pendingAmount', 'Unpaid Amount', 'currencyFormat', true],
   ['orderDate', 'Order Date', 'dateFormat'],
   ['capturedDate', 'Paid Date', 'dateFormat'],
+];
+
+// [id, name, format, source field, aggregation]
+const MEASURES = [
+  ['seatsOrdered', 'Seats Ordered', 'integerFormat', 'orders.seats', 'sum'],
+  ['seatsUnlocked', 'Seats Unlocked', 'integerFormat', 'orders.seatsUnlocked', 'sum'],
+  ['seatsPending', 'Seats Pending', 'integerFormat', 'orders.seatsPending', 'sum'],
+  ['orderTotal', 'Order Total', 'currencyFormat', 'orders.amount', 'sum'],
+  ['revenue', 'Revenue', 'currencyFormat', 'orders.revenue', 'sum'],
+  ['awaitingPayment', 'Awaiting Payment', 'currencyFormat', 'orders.pendingAmount', 'sum'],
+  ['orderCount', 'Orders', 'integerFormat', 'orders.orderId', 'countd'],
 ];
 
 export function buildStudioData(orders) {
@@ -50,6 +62,14 @@ export function buildStudioData(orders) {
         target: { calendarId: CALENDAR_ID },
       },
     ],
+    expressions: MEASURES.map(([id, name, format, source, aggregation]) => ({
+      id,
+      name,
+      format,
+      ...(format === 'currencyFormat' && { formatOptions: USD }),
+      isMeasure: true,
+      expression: { id: source, aggregation },
+    })),
     calendars: [
       {
         id: CALENDAR_ID,

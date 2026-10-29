@@ -56,8 +56,7 @@ h2 { margin: 0; font: 700 18px 'Manrope', sans-serif; letter-spacing: 0; }
 .table-heading { min-height: 38px; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; border-bottom: 1px solid #edf1ed; }
 .table-heading h3 { margin: 0; font: 700 11px 'Manrope', sans-serif; }
 .table-heading span { color: #8a958e; font-size: 9px; }
-.grid-frame { width: 100%; min-height: 47px; --ag-font-family: 'DM Sans', sans-serif; --ag-font-size: 10px; --ag-header-font-size: 9px; --ag-header-background-color: #f8faf8; --ag-header-foreground-color: #7c8880; --ag-border-color: #edf1ed; --ag-row-border-color: #edf1ed; --ag-header-height: 32px; --ag-row-height: 34px; --ag-wrapper-border-radius: 0; }
-.grid-frame .ag-root-wrapper { border: 0; }
+.grid-frame { width: 100%; min-height: 47px; }
 .grid-empty { min-height: 48px; display: flex; align-items: center; padding: 0 13px; color: #8b9690; font-size: 10px; }
 footer { margin-top: 22px; padding-top: 13px; color: #8c9790; border-top: 1px solid var(--line); font-size: 9px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
