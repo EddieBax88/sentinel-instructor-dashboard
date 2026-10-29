@@ -103,6 +103,7 @@ footer { margin-top: 22px; padding-top: 13px; color: #8c9790; border-top: 1px so
 .analytics-modes { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: #fff; }
 .analytics-modes button { padding: 6px 11px; color: var(--muted); background: #fff; border: 0; font-size: 10px; font-weight: 700; cursor: pointer; }
 .analytics-modes button.active { color: var(--green); background: var(--green-soft); }
+.analytics-modes button:disabled { color: #b6beb8; cursor: not-allowed; }
 .analytics-canvas { height: calc(100vh - 170px); min-height: 640px; margin-top: 12px; }
 .studio-revenue { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 4px 6px; }
 .studio-revenue strong { color: var(--green); font: 800 30px var(--heading-font); }

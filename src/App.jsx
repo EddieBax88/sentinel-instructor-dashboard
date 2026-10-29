@@ -155,7 +155,7 @@ export default function App() {
         {view === 'analytics' ? (
           accessToken ? (
             <Suspense fallback={<div className="grid-empty">Loading analytics…</div>}>
-              <InstructorAnalytics accessToken={accessToken} />
+              <InstructorAnalytics accessToken={accessToken} assistantAvailable={dashboard.analyticsAssistantAvailable} />
             </Suspense>
           ) : (
             <section id="analytics" className="analytics-section">

@@ -85,6 +85,15 @@ Run them in this order. If you re-run file 2 later, run file 3 again after it, s
 
 The first file was renamed from its original name; its SQL is unchanged. The Supabase CLI tracks migrations by the numeric version prefix, which did not change, so an already-applied database needs no action.
 
+### Analytics assistant (AG Studio Agent Framework)
+
+On **Instructor analytics**, **Ask AI** opens AG Studio's AI Assistant beside the report, with suggestions such as "Show revenue by class" and "Seats pending by day". It answers questions about the instructor's own orders and adds or changes widgets.
+
+- **Model.** NVIDIA Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`), set as `STUDIO_AGENT_MODEL` in `server/config.js`. Studio's built-in agents (lead, data, widget, page, planning) take several tool-calling rounds per question, with tool definitions of up to about 56 KB per request, so speed per round matters. NVIDIA lists Super for agentic tool use, and it has 12B active parameters to Ultra's 55B. The seat assistant stays on Nemotron 3 Ultra.
+- **Adapter and proxy.** `src/analytics/nvidiaAdapter.js` is a Chat Completions adapter for Studio. It posts each turn to `POST /api/studio-ai/chat` (`server/studioAi.js`), which requires the signed-in Supabase token, adds the NVIDIA key, chooses the model and settings, strips reasoning text (`</think>` and reasoning fields), and returns only the cleaned message and tool calls. The key never reaches the browser.
+- **Read and build only.** The proxy accepts only AG Studio's own tools (reading the schema and data, and editing widgets, filters, pages, and plans in the browser) and refuses any request that offers or replays another tool. The assistant cannot create orders or take payments; purchases stay in the seat assistant with its Confirm step.
+- **Checking a model.** `npm run probe:studio-agent` replays Studio's real first-turn requests for each agent (`scripts/fixtures/studio-agent-requests.json`) against NVIDIA with your `NVIDIA_API_KEY`, and reports, per model and setting, how many turns returned valid tool calls and how long they took.
+
 ## Production build
 
 ```sh

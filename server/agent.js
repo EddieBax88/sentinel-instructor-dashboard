@@ -1,6 +1,6 @@
-import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
-import { AGENT_BASE_URL, AGENT_MODEL, MAX_SEATS_PER_ORDER } from './config.js';
+import { AGENT_MODEL, MAX_SEATS_PER_ORDER } from './config.js';
+import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
 import { listPaypalOrdersForUser, logAgentAction } from './supabase.js';
@@ -51,19 +51,9 @@ const TOOL_DEFINITIONS = [
 const TOOLS = TOOL_DEFINITIONS.map((definition) => ({ type: 'function', function: definition }));
 
 const proposals = new Map();
-let defaultClient;
 
-export function isAgentConfigured() {
-  return Boolean(process.env.NVIDIA_API_KEY);
-}
-
-function nvidiaClient() {
-  if (!isAgentConfigured()) {
-    throw Object.assign(new Error('Set NVIDIA_API_KEY in .env to enable the seat assistant.'), { statusCode: 503 });
-  }
-  defaultClient ??= new OpenAI({ apiKey: process.env.NVIDIA_API_KEY, baseURL: AGENT_BASE_URL });
-  return defaultClient;
-}
+export const isAgentConfigured = isNvidiaConfigured;
+export { replyText };
 
 export function validateSeatRequest({ quantity, class_name: className }) {
   assertSeatQuantity(quantity);
@@ -145,20 +135,6 @@ export function isSeatRequest(messages) {
     && latest.trim().split(/\s+/).length <= MAX_FOLLOW_UP_WORDS;
 }
 
-// Only message.content becomes the reply; reasoning fields (reasoning_content, reasoning) are
-// never read. The chat template opens <think> in the prompt, so content can start with bare
-// reasoning that ends at </think>: drop everything up to the last </think>, any complete
-// <think>...</think> block, and anything after an unclosed <think>.
-export function replyText(content) {
-  let text = typeof content === 'string' ? content : '';
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  const closing = text.toLowerCase().lastIndexOf('</think>');
-  if (closing !== -1) text = text.slice(closing + '</think>'.length);
-  const opening = text.toLowerCase().indexOf('<think>');
-  if (opening !== -1) text = text.slice(0, opening);
-  return text.trim();
-}
-
 function parseToolArguments(text) {
   try {
     const input = JSON.parse(text || '{}');
@@ -171,7 +147,7 @@ function parseToolArguments(text) {
 
 // History arrives as text-only turns; inside one request the loop appends each
 // assistant message unchanged, as the model's chat template expects.
-export async function runAgent({ userId, messages, client = nvidiaClient() }) {
+export async function runAgent({ userId, messages, client = nvidiaClient('the seat assistant') }) {
   const history = validateMessages(messages);
   const onTopic = isSeatRequest(history);
   const conversation = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];

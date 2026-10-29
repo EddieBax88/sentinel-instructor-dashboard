@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
 import analyticsRouter from './analytics.js';
+import studioAiRouter from './studioAi.js';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
 import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, publicSupabaseConfiguration } from './supabase.js';
 import webhookRouter from './webhook.js';
@@ -17,6 +18,8 @@ const app = express();
 
 
 app.disable('x-powered-by');
+// Mounted before the app-wide JSON parser: Studio's agent requests need a larger body limit.
+app.use('/api/studio-ai', studioAiRouter);
 app.use(express.json({
   verify: (request, _response, buffer) => {
     if (request.originalUrl.startsWith('/api/paypal/webhook')) request.rawBody = Buffer.from(buffer);
@@ -24,7 +27,11 @@ app.use(express.json({
 }));
 app.get('/api/dashboard', (_request, response) => {
   const paymentAvailable = isPaypalConfigured() && isSupabaseConfigured();
-  response.json({ paymentAvailable, agentAvailable: paymentAvailable && isAgentConfigured() });
+  response.json({
+    paymentAvailable,
+    agentAvailable: paymentAvailable && isAgentConfigured(),
+    analyticsAssistantAvailable: isSupabaseConfigured() && isAgentConfigured(),
+  });
 });
 
 // The ledger is per instructor: the user ID comes only from the verified access token.
