@@ -22,8 +22,13 @@ const TRIALS = Number(process.env.TRIALS) || 2;
 const TIMEOUT_MS = 120_000;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/studio-agent-requests.json', import.meta.url), 'utf8'));
 
+// Candidate for Ask AI: NVIDIA's free hosted endpoint no longer serves Nemotron 3 Super (404).
+const SUPER_VL_MODEL = 'nvidia/nemotron-3.5-super-vl-120b-a12b';
+
 const variants = [
   { label: 'Ultra, thinking on (app setting)', model: AGENT_MODEL, templateKwargs: AGENT_TEMPLATE_KWARGS },
+  { label: 'Super 3.5 VL, thinking on', model: SUPER_VL_MODEL, templateKwargs: { enable_thinking: true } },
+  { label: 'Super 3.5 VL, thinking off', model: SUPER_VL_MODEL, templateKwargs: { enable_thinking: false } },
 ];
 
 function checkToolCalls(request, message) {

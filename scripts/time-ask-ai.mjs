@@ -8,6 +8,7 @@
 // (server/studioAi.js) and sent to NVIDIA with NVIDIA_API_KEY from .env; orders are sample data.
 // Prints one row per turn and the total, and saves a screenshot to logs/ask-ai-timing.png.
 // Needs Playwright's Chromium once: npx playwright install chromium
+// Stops after 5 minutes (TIMEOUT_MIN to change), prints the turns that finished, and exits 1.
 
 import 'dotenv/config';
 import { mkdirSync } from 'node:fs';
@@ -19,7 +20,7 @@ import { nvidiaClient } from '../server/nvidia.js';
 import { buildNvidiaRequest, describeTurn, sanitizeCompletion } from '../server/studioAi.js';
 
 const QUESTION = process.argv[2] || 'Add a pie chart of seats unlocked vs pending.';
-const QUESTION_TIMEOUT_MS = 10 * 60_000;
+const HARD_TIMEOUT_MS = (Number(process.env.TIMEOUT_MIN) || 5) * 60_000;
 const IDLE_CONFIRM_MS = 4000;
 
 const order = (id, className, status, seats, orderDate, capturedDate = null) => {
@@ -44,12 +45,26 @@ const SAMPLE = {
 };
 
 const client = nvidiaClient('the timing harness');
-const vite = await createServer({ configFile: false, logLevel: 'error', server: { port: 0, host: '127.0.0.1', forwardConsole: false } });
-await vite.listen();
-const url = `${vite.resolvedUrls.local[0]}scripts/ask-ai-harness/index.html`;
-const browser = await chromium.launch();
 const turns = [];
 let questionStarted = 0;
+let vite;
+let browser;
+let timedOut = false;
+
+const hardTimeout = setTimeout(async () => {
+  timedOut = true;
+  process.exitCode = 1;
+  console.log(`\n\nTIMED OUT after ${HARD_TIMEOUT_MS / 60_000} min. Turns that finished:`);
+  report(null);
+  const closing = Promise.allSettled([browser?.close(), vite?.close()]);
+  await Promise.race([closing, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  process.exit(1);
+}, HARD_TIMEOUT_MS);
+
+vite = await createServer({ configFile: false, logLevel: 'error', server: { port: 0, host: '127.0.0.1', forwardConsole: false } });
+await vite.listen();
+const url = `${vite.resolvedUrls.local[0]}scripts/ask-ai-harness/index.html`;
+browser = await chromium.launch();
 
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
@@ -85,9 +100,8 @@ try {
   // last turn; this waits longer to be sure no further turn starts).
   const progress = page.locator('.ai-progress');
   await progress.waitFor({ state: 'visible', timeout: 30_000 });
-  const deadline = Date.now() + QUESTION_TIMEOUT_MS;
   for (;;) {
-    await progress.waitFor({ state: 'hidden', timeout: Math.max(1, deadline - Date.now()) });
+    await progress.waitFor({ state: 'hidden', timeout: 0 });
     const hiddenAt = performance.now();
     await page.waitForTimeout(IDLE_CONFIRM_MS);
     if (await progress.isHidden()) {
@@ -98,9 +112,13 @@ try {
       break;
     }
   }
+} catch (error) {
+  // Closing the browser on timeout ends the waits above; that is not a second failure.
+  if (!timedOut) throw error;
 } finally {
-  await browser.close();
-  await vite.close();
+  clearTimeout(hardTimeout);
+  await browser.close().catch(() => {});
+  await vite.close().catch(() => {});
 }
 
 function report(totalS) {
@@ -117,7 +135,9 @@ function report(totalS) {
   });
   const modelS = turns.reduce((sum, turn) => sum + turn.latencyMs, 0) / 1000;
   const sum = (key) => turns.reduce((total, turn) => total + (turn[key] ?? 0), 0);
-  console.log(`\nTurns: ${turns.length}   Total: ${totalS.toFixed(1)} s   Model time: ${modelS.toFixed(1)} s   Browser/tool time: ${(totalS - modelS).toFixed(1)} s`);
+  const total = totalS === null ? 'not finished' : `${totalS.toFixed(1)} s`;
+  const browserTime = totalS === null ? '-' : `${(totalS - modelS).toFixed(1)} s`;
+  console.log(`\nTurns: ${turns.length}   Total: ${total}   Model time: ${modelS.toFixed(1)} s   Browser/tool time: ${browserTime}`);
   console.log(`Tokens: thinking ${sum('thinkingTokens')}${turns.some((turn) => turn.thinkingEstimated) ? ' (~ = estimated from reasoning text)' : ''}, output ${sum('outputTokens')}, input ${sum('inputTokens')}`);
-  console.log('Screenshot: logs/ask-ai-timing.png');
+  if (totalS !== null) console.log('Screenshot: logs/ask-ai-timing.png');
 }
