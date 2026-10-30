@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import express from 'express';
 import { encodeRequest } from '../src/analytics/nvidiaAdapter.js';
 import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from './config.js';
-import { buildNvidiaRequest, createStudioAiRouter, describeTurn, sanitizeCompletion, STUDIO_TOOL_NAMES } from './studioAi.js';
+import { buildNvidiaRequest, completeTurn, createStudioAiRouter, describeTurn, sanitizeCompletion, STUDIO_TOOL_NAMES } from './studioAi.js';
 
 const FAKE_KEY = 'nvapi-test-key-that-must-never-reach-the-browser';
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -39,9 +39,9 @@ async function fakeFetch(url, options = {}) {
   throw new Error(`Unexpected request to ${url}`);
 }
 
-async function post(body, { token = 'valid-token' } = {}) {
+async function post(body, { token = 'valid-token', client = fakeClient, retryAfterMs } = {}) {
   const app = express();
-  app.use('/api/studio-ai', createStudioAiRouter({ client: fakeClient }));
+  app.use('/api/studio-ai', createStudioAiRouter({ client, retryAfterMs }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   try {
@@ -202,4 +202,79 @@ test('describeTurn names the Studio agent and reports latency, tokens, and tools
   assert.equal(estimated.thinkingTokens, 20);
   assert.equal(estimated.thinkingEstimated, true);
   assert.deepEqual(estimated.tools, []);
+});
+
+// A model client whose calls follow a script: 'stall' waits until aborted, a number replies after
+// that many ms, an Error is thrown.
+function stallingClient(script) {
+  const calls = [];
+  return {
+    calls,
+    chat: {
+      completions: {
+        create: (body, options = {}) => {
+          const step = script[calls.length];
+          calls.push({ signal: options.signal });
+          if (step instanceof Error) return Promise.reject(step);
+          if (step === 'stall') {
+            return new Promise((resolve, reject) => {
+              options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('Request was aborted.'), { name: 'AbortError' })));
+            });
+          }
+          return new Promise((resolve) => setTimeout(() => resolve(completion({ content: `reply ${calls.length}` })), step));
+        },
+      },
+    },
+  };
+}
+
+test('a stalled turn is aborted at the retry point and sent once more', async () => {
+  const client = stallingClient(['stall', 5]);
+  const result = await completeTurn(client, buildNvidiaRequest(leadBody()), { retryAfterMs: 30 });
+  assert.equal(client.calls.length, 2);
+  assert.equal(client.calls[0].signal.aborted, true);
+  assert.equal(client.calls[1].signal, undefined);
+  assert.equal(result.retried, true);
+  assert.equal(result.completion.choices[0].message.content, 'reply 2');
+  assert.ok(result.firstAttemptMs >= 30 && result.retryMs >= 5);
+  assert.equal(result.latencyMs, result.firstAttemptMs + result.retryMs);
+});
+
+test('a slow retry runs to completion and is never aborted or retried again', async () => {
+  const client = stallingClient(['stall', 80]);
+  const result = await completeTurn(client, buildNvidiaRequest(leadBody()), { retryAfterMs: 20 });
+  assert.equal(client.calls.length, 2);
+  assert.equal(result.completion.choices[0].message.content, 'reply 2');
+  assert.ok(result.retryMs >= 80);
+});
+
+test('a fast turn is not retried, and model errors are not retried', async () => {
+  const fast = stallingClient([1]);
+  const result = await completeTurn(fast, buildNvidiaRequest(leadBody()), { retryAfterMs: 1000 });
+  assert.deepEqual([fast.calls.length, result.retried], [1, false]);
+
+  const failing = stallingClient([Object.assign(new Error('Bad gateway'), { status: 502 }), 1]);
+  await assert.rejects(completeTurn(failing, buildNvidiaRequest(leadBody()), { retryAfterMs: 1000 }), /Bad gateway/);
+  assert.equal(failing.calls.length, 1);
+});
+
+test('the proxy answers after a retry and logs it when STUDIO_AI_TIMING=1', async () => {
+  const client = stallingClient(['stall', 5]);
+  const logged = [];
+  const originalLog = console.log;
+  process.env.STUDIO_AI_TIMING = '1';
+  console.log = (line) => logged.push(line);
+  try {
+    const response = await post(leadBody(), { client: () => client, retryAfterMs: 30 });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.message.content, 'reply 2');
+  } finally {
+    console.log = originalLog;
+    delete process.env.STUDIO_AI_TIMING;
+  }
+  const row = JSON.parse(logged.find((line) => line.startsWith('[studio-ai] ')).slice(12));
+  assert.equal(row.agent, 'lead');
+  assert.equal(row.retried, true);
+  assert.ok(row.firstAttemptMs >= 30 && row.retryMs >= 5);
+  assert.equal(row.latencyMs, row.firstAttemptMs + row.retryMs);
 });

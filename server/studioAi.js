@@ -23,6 +23,9 @@ const SCOPE_NOTE = 'You are the analytics assistant in an instructor dashboard. 
 const MAX_MESSAGES = 200;
 const MAX_TOOLS = 30;
 const MAX_OUTPUT_TOKENS = 16384;
+// NVIDIA's free endpoint sometimes stalls a turn for 40-60 s that normally takes 2-6 s. A turn
+// still running at this point is aborted and sent once more; the second try runs to completion.
+export const TURN_RETRY_AFTER_MS = 15_000;
 const ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 const fail = (status, message) => Object.assign(new Error(message), { statusCode: status });
@@ -108,7 +111,28 @@ export function describeTurn(nvidiaRequest, completion, latencyMs) {
   };
 }
 
-export function createStudioAiRouter({ client = () => nvidiaClient('the analytics assistant') } = {}) {
+// One model turn with a single retry after a stall. Errors other than our own abort are thrown as
+// before; the retry has no deadline, so a slow endpoint never fails the question.
+export async function completeTurn(client, nvidiaRequest, { retryAfterMs = TURN_RETRY_AFTER_MS } = {}) {
+  const firstStarted = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), retryAfterMs);
+  try {
+    const completion = await client.chat.completions.create(nvidiaRequest, { signal: controller.signal });
+    return { completion, latencyMs: Date.now() - firstStarted, retried: false };
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+  const firstAttemptMs = Date.now() - firstStarted;
+  const retryStarted = Date.now();
+  const completion = await client.chat.completions.create(nvidiaRequest);
+  const retryMs = Date.now() - retryStarted;
+  return { completion, latencyMs: firstAttemptMs + retryMs, retried: true, firstAttemptMs, retryMs };
+}
+
+export function createStudioAiRouter({ client = () => nvidiaClient('the analytics assistant'), retryAfterMs } = {}) {
   const router = Router();
   // Studio's tool definitions and history are larger than the app-wide JSON limit.
   router.use(express.json({ limit: '2mb' }));
@@ -118,13 +142,13 @@ export function createStudioAiRouter({ client = () => nvidiaClient('the analytic
     try {
       await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
       const nvidiaRequest = buildNvidiaRequest(request.body);
-      const started = Date.now();
-      const completion = await client().chat.completions.create(nvidiaRequest);
+      const { completion, latencyMs, retried, firstAttemptMs, retryMs } = await completeTurn(client(), nvidiaRequest, { retryAfterMs });
       if (process.env.STUDIO_AI_TIMING === '1') {
-        console.log(`[studio-ai] ${JSON.stringify(describeTurn(nvidiaRequest, completion, Date.now() - started))}`);
+        const row = { ...describeTurn(nvidiaRequest, completion, latencyMs), ...(retried && { retried, firstAttemptMs, retryMs }) };
+        console.log(`[studio-ai] ${JSON.stringify(row)}`);
       }
       response.set('Cache-Control', 'no-store');
-      response.json({ ...sanitizeCompletion(completion), elapsedMs: Date.now() - started });
+      response.json({ ...sanitizeCompletion(completion), elapsedMs: latencyMs });
     } catch (error) {
       const status = error.statusCode || (error.status >= 400 && error.status < 500 ? 502 : error.status) || 502;
       response.status(status).json({ error: error.statusCode ? error.message : `The analytics model request failed${error.status ? ` (${error.status})` : ''}.` });

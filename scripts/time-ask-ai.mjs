@@ -17,7 +17,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { AGENT_MODEL } from '../server/config.js';
 import { nvidiaClient } from '../server/nvidia.js';
-import { buildNvidiaRequest, describeTurn, sanitizeCompletion } from '../server/studioAi.js';
+import { buildNvidiaRequest, completeTurn, describeTurn, sanitizeCompletion } from '../server/studioAi.js';
 
 const QUESTION = process.argv[2] || 'Add a pie chart of seats unlocked vs pending.';
 const HARD_TIMEOUT_MS = (Number(process.env.TIMEOUT_MIN) || 5) * 60_000;
@@ -75,9 +75,8 @@ try {
     const sentAt = performance.now();
     try {
       const nvidiaRequest = buildNvidiaRequest(route.request().postDataJSON());
-      const completion = await client.chat.completions.create(nvidiaRequest, { timeout: 180_000, maxRetries: 0 });
-      const latencyMs = Math.round(performance.now() - sentAt);
-      turns.push({ startS: (sentAt - questionStarted) / 1000, ...describeTurn(nvidiaRequest, completion, latencyMs) });
+      const { completion, latencyMs, retried, firstAttemptMs } = await completeTurn(client, nvidiaRequest);
+      turns.push({ startS: (sentAt - questionStarted) / 1000, ...describeTurn(nvidiaRequest, completion, latencyMs), retried, firstAttemptMs });
       process.stdout.write('.');
       await route.fulfill({ json: sanitizeCompletion(completion) });
     } catch (error) {
@@ -129,7 +128,8 @@ function report(totalS) {
       index + 1, turn.startS.toFixed(1), turn.agent, (turn.latencyMs / 1000).toFixed(1),
       turn.error ? '-' : `${turn.thinkingEstimated ? '~' : ''}${turn.thinkingTokens}`,
       turn.outputTokens ?? '-', turn.inputTokens ?? '-',
-      turn.error ? `ERROR ${turn.error}` : turn.tools.join(', ') || `(text, ${turn.finishReason})`,
+      (turn.error ? `ERROR ${turn.error}` : turn.tools.join(', ') || `(text, ${turn.finishReason})`)
+        + (turn.retried ? ` [retried after ${(turn.firstAttemptMs / 1000).toFixed(1)} s]` : ''),
     ];
     console.log(cells.map((cell, i) => String(cell).padEnd(cols[i][1])).join(''));
   });
