@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import express from 'express';
 import { encodeRequest } from '../src/analytics/nvidiaAdapter.js';
 import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from './config.js';
-import { createStudioAiRouter, sanitizeCompletion, STUDIO_TOOL_NAMES } from './studioAi.js';
+import { buildNvidiaRequest, createStudioAiRouter, describeTurn, sanitizeCompletion, STUDIO_TOOL_NAMES } from './studioAi.js';
 
 const FAKE_KEY = 'nvapi-test-key-that-must-never-reach-the-browser';
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -183,4 +183,23 @@ test('sanitizeCompletion keeps only the cleaned message, finish reason, and usag
     message: { role: 'assistant', content: 'Answer' },
     usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
   });
+});
+
+test('describeTurn names the Studio agent and reports latency, tokens, and tools called', () => {
+  const widget = buildNvidiaRequest(encodeRequest(fixtures.widget));
+  const reported = describeTurn(widget, {
+    choices: [{ message: { content: 'Done.', reasoning_content: 'x'.repeat(400), tool_calls: [{ type: 'function', function: { name: 'configure_widget', arguments: '{}' } }] }, finish_reason: 'tool_calls' }],
+    usage: { prompt_tokens: 9000, completion_tokens: 300, completion_tokens_details: { reasoning_tokens: 250 } },
+  }, 4200);
+  assert.deepEqual(reported, {
+    agent: 'widget', latencyMs: 4200, inputTokens: 9000, outputTokens: 300, thinkingTokens: 250, thinkingEstimated: false, tools: ['configure_widget'], finishReason: 'tool_calls',
+  });
+
+  const agents = Object.entries(fixtures).map(([name, request]) => [name, describeTurn(buildNvidiaRequest(encodeRequest(request)), {}, 0).agent]);
+  assert.deepEqual(agents, Object.keys(fixtures).map((name) => [name, name]));
+
+  const estimated = describeTurn(widget, { choices: [{ message: { content: `${'y'.repeat(80)}</think>Answer` }, finish_reason: 'stop' }] }, 10);
+  assert.equal(estimated.thinkingTokens, 20);
+  assert.equal(estimated.thinkingEstimated, true);
+  assert.deepEqual(estimated.tools, []);
 });

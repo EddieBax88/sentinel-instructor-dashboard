@@ -71,6 +71,43 @@ export function sanitizeCompletion(completion) {
   };
 }
 
+// Which AG Studio agent sent a turn, from the opening of its instructions (AG Studio 3.0).
+const AGENT_SIGNATURES = [
+  ['lead', /You are the Orchestrator/i],
+  ['data', /You are a data analyst/i],
+  ['widget', /You configure a single/i],
+  ['page', /You are the page manager/i],
+  ['planning', /planning specialist/i],
+];
+
+const estimateTokens = (text) => Math.round(text.length / 4);
+
+// One timing row per model turn, for `STUDIO_AI_TIMING=1` and scripts/time-ask-ai.mjs. Thinking
+// tokens come from NVIDIA's usage details when reported, otherwise they are estimated from the
+// reasoning text (about 4 characters per token) and marked estimated. Nothing here is returned
+// to the browser.
+export function describeTurn(nvidiaRequest, completion, latencyMs) {
+  const instructions = nvidiaRequest.messages.find((message, index) => index > 0 && message.role === 'system')?.content ?? '';
+  const agent = AGENT_SIGNATURES.find(([, pattern]) => pattern.test(instructions))?.[0] ?? 'unknown';
+  const choice = completion?.choices?.[0] ?? {};
+  const message = choice.message ?? {};
+  const content = typeof message.content === 'string' ? message.content : '';
+  const closing = content.toLowerCase().lastIndexOf('</think>');
+  const reasoning = [message.reasoning_content, message.reasoning, closing === -1 ? '' : content.slice(0, closing)]
+    .filter((part) => typeof part === 'string' && part).join('');
+  const reported = completion?.usage?.completion_tokens_details?.reasoning_tokens;
+  return {
+    agent,
+    latencyMs,
+    inputTokens: completion?.usage?.prompt_tokens ?? null,
+    outputTokens: completion?.usage?.completion_tokens ?? null,
+    thinkingTokens: typeof reported === 'number' ? reported : estimateTokens(reasoning),
+    thinkingEstimated: typeof reported !== 'number',
+    tools: (message.tool_calls ?? []).map((call) => call?.function?.name).filter(Boolean),
+    finishReason: choice.finish_reason ?? null,
+  };
+}
+
 export function createStudioAiRouter({ client = () => nvidiaClient('the analytics assistant') } = {}) {
   const router = Router();
   // Studio's tool definitions and history are larger than the app-wide JSON limit.
@@ -83,6 +120,9 @@ export function createStudioAiRouter({ client = () => nvidiaClient('the analytic
       const nvidiaRequest = buildNvidiaRequest(request.body);
       const started = Date.now();
       const completion = await client().chat.completions.create(nvidiaRequest);
+      if (process.env.STUDIO_AI_TIMING === '1') {
+        console.log(`[studio-ai] ${JSON.stringify(describeTurn(nvidiaRequest, completion, Date.now() - started))}`);
+      }
       response.set('Cache-Control', 'no-store');
       response.json({ ...sanitizeCompletion(completion), elapsedMs: Date.now() - started });
     } catch (error) {
