@@ -11,7 +11,7 @@
     "probe:studio-agent": "node scripts/probe-studio-agent.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
