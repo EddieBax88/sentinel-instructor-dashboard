@@ -135,9 +135,17 @@ export function decodeCompletion(payload) {
 }
 
 // The AgLlmAdapter Studio calls once per turn. getAccessToken returns the signed-in session token.
-export function nvidiaStudioAdapter({ endpoint = '/api/studio-ai/chat', getAccessToken, fetchImpl = (...args) => fetch(...args) }) {
+// onBusyChange(true/false) reports whether any turn is waiting on the proxy, for a progress display.
+export function nvidiaStudioAdapter({ endpoint = '/api/studio-ai/chat', getAccessToken, fetchImpl = (...args) => fetch(...args), onBusyChange = () => {} }) {
+  let pending = 0;
+  const track = (delta) => {
+    const wasBusy = pending > 0;
+    pending += delta;
+    if (wasBusy !== pending > 0) onBusyChange(pending > 0);
+  };
   return {
     executeTurn(request, options = {}) {
+      track(1);
       const result = (async () => {
         const response = await fetchImpl(endpoint, {
           method: 'POST',
@@ -148,7 +156,7 @@ export function nvidiaStudioAdapter({ endpoint = '/api/studio-ai/chat', getAcces
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || `The analytics assistant request failed (${response.status}).`);
         return decodeCompletion(payload);
-      })();
+      })().finally(() => track(-1));
       const complete = result.then(({ response }) => response);
       // A failed turn is reported once, through `complete`; this marks it observed for a reader
       // that stops consuming the stream.

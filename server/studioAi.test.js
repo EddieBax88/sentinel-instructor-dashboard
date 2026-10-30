@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import { encodeRequest } from '../src/analytics/nvidiaAdapter.js';
-import { STUDIO_AGENT_MODEL, STUDIO_AGENT_TEMPLATE_KWARGS } from './config.js';
+import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from './config.js';
 import { createStudioAiRouter, sanitizeCompletion, STUDIO_TOOL_NAMES } from './studioAi.js';
 
 const FAKE_KEY = 'nvapi-test-key-that-must-never-reach-the-browser';
@@ -58,7 +58,7 @@ async function post(body, { token = 'valid-token' } = {}) {
 }
 
 const completion = (message, finishReason = 'stop') => ({
-  id: 'cmpl-1', model: STUDIO_AGENT_MODEL, choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: finishReason }],
+  id: 'cmpl-1', model: AGENT_MODEL, choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: finishReason }],
   usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
 });
 
@@ -95,9 +95,9 @@ test("the server picks the model and settings; the client's model, token cap, an
 
   assert.equal(status, 200);
   const [sent] = modelCalls;
-  assert.equal(sent.model, STUDIO_AGENT_MODEL);
+  assert.equal(sent.model, AGENT_MODEL);
   assert.equal(sent.max_tokens, 16384);
-  assert.deepEqual(sent.chat_template_kwargs, STUDIO_AGENT_TEMPLATE_KWARGS);
+  assert.deepEqual(sent.chat_template_kwargs, AGENT_TEMPLATE_KWARGS);
   assert.equal(sent.api_key, undefined);
   assert.equal(sent.messages[0].role, 'system');
   assert.match(sent.messages[0].content, /cannot buy seats, create orders, or take payments/);
@@ -179,7 +179,7 @@ test('every tool in the captured Studio requests is on the allowlist', () => {
 test('sanitizeCompletion keeps only the cleaned message, finish reason, and usage', () => {
   const clean = sanitizeCompletion(completion({ content: '<think>plan</think>Answer', reasoning_content: 'hidden' }, 'length'));
   assert.deepEqual(clean, {
-    id: 'cmpl-1', model: STUDIO_AGENT_MODEL, finish_reason: 'length',
+    id: 'cmpl-1', model: AGENT_MODEL, finish_reason: 'length',
     message: { role: 'assistant', content: 'Answer' },
     usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
   });

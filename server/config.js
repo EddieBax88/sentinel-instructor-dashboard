@@ -9,9 +9,8 @@ export const MAX_SEATS_PER_ORDER = 200;
 export const AGENT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 export const AGENT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 
-// AG Studio analytics agent (Instructor analytics chat), on the same NVIDIA endpoint. Studio's
-// agents take many tool-calling rounds per question, so this uses Nemotron 3 Super: NVIDIA lists
-// it for agentic tool use with 12B active parameters (Ultra has 55B), so each round is faster.
-// Run `npm run probe:studio-agent` to compare models on Studio's real tool definitions.
-export const STUDIO_AGENT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
-export const STUDIO_AGENT_TEMPLATE_KWARGS = { enable_thinking: true, force_nonempty_content: true };
+// Required by NVIDIA's model card for this model to parse tool calls.
+export const AGENT_TEMPLATE_KWARGS = { enable_thinking: true, force_nonempty_content: true };
+
+// The AG Studio analytics agent (Ask AI) uses the same model and settings as the seat assistant.
+// `npm run probe:studio-agent` checks this model on Studio's real tool definitions.

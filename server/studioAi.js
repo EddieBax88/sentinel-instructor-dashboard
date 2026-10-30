@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { STUDIO_AGENT_MODEL, STUDIO_AGENT_TEMPLATE_KWARGS } from './config.js';
+import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from './config.js';
 import { nvidiaClient, replyText } from './nvidia.js';
 import { authenticateSupabaseUser, getBearerToken } from './supabase.js';
 
@@ -29,7 +29,7 @@ const fail = (status, message) => Object.assign(new Error(message), { statusCode
 
 // Client body (from src/analytics/nvidiaAdapter.js) -> NVIDIA request. The model, token cap, and
 // sampling come from server config; anything else the client sends is ignored.
-export function buildNvidiaRequest(body, { model = STUDIO_AGENT_MODEL, templateKwargs = STUDIO_AGENT_TEMPLATE_KWARGS } = {}) {
+export function buildNvidiaRequest(body, { model = AGENT_MODEL, templateKwargs = AGENT_TEMPLATE_KWARGS } = {}) {
   const { messages, tools = [], tool_choice: toolChoice, response_format: responseFormat } = body ?? {};
   if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
     throw fail(400, `Send 1 to ${MAX_MESSAGES} messages.`);

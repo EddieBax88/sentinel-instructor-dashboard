@@ -73,7 +73,7 @@ test('merges consecutive tool calls into one assistant turn and maps tool choice
 test('decodes text and tool calls into Studio events and output items', () => {
   const { events, response } = decodeCompletion({
     id: 'cmpl-1',
-    model: 'nvidia/nemotron-3-super-120b-a12b',
+    model: 'nvidia/nemotron-3-ultra-550b-a55b',
     finish_reason: 'tool_calls',
     message: { role: 'assistant', content: 'Adding a chart.', tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'add_widget', arguments: '{"widgetType":"column-chart-grouped"}' } }] },
     usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
@@ -131,6 +131,26 @@ test('a failed turn rejects complete with the server message and ends the stream
   const handler = adapter.executeTurn(fixtures.lead);
   assert.deepEqual(await collect(handler.stream), []);
   await assert.rejects(handler.complete, /invalid or expired/);
+});
+
+test('reports busy while any turn is waiting on the proxy, including failed turns', async () => {
+  const changes = [];
+  const replies = [];
+  const adapter = nvidiaStudioAdapter({
+    getAccessToken: () => 'session-token',
+    fetchImpl: () => new Promise((resolve) => replies.push(resolve)),
+    onBusyChange: (busy) => changes.push(busy),
+  });
+
+  const first = adapter.executeTurn(fixtures.lead);
+  const second = adapter.executeTurn(fixtures.lead);
+  assert.deepEqual(changes, [true]);
+  replies[0](Response.json({ finish_reason: 'stop', message: { content: 'One.' } }));
+  await first.complete;
+  assert.deepEqual(changes, [true]);
+  replies[1](Response.json({ error: 'NVIDIA timed out.' }, { status: 502 }));
+  await assert.rejects(second.complete, /timed out/);
+  assert.deepEqual(changes, [true, false]);
 });
 
 test('inlineSchemaRefs inlines non-recursive definitions and keeps recursive ones referenced', () => {

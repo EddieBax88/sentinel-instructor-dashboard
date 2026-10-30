@@ -10,6 +10,9 @@
     "test": "node --test server/*.test.js src/analytics/*.test.js",
     "probe:studio-agent": "node scripts/probe-studio-agent.mjs"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
     "ag-grid-community": "36.2.0",

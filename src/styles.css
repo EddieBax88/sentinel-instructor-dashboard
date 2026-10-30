@@ -104,6 +104,13 @@ footer { margin-top: 22px; padding-top: 13px; color: #8c9790; border-top: 1px so
 .analytics-modes button { padding: 6px 11px; color: var(--muted); background: #fff; border: 0; font-size: 10px; font-weight: 700; cursor: pointer; }
 .analytics-modes button.active { color: var(--green); background: var(--green-soft); }
 .analytics-modes button:disabled { color: #b6beb8; cursor: not-allowed; }
+.ai-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 9px 12px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 4px; background: var(--green-soft); font-size: 12px; }
+.ai-progress[hidden] { display: none; }
+.ai-progress strong { color: var(--green); font-variant-numeric: tabular-nums; }
+.ai-progress span:last-child { color: var(--muted); }
+.ai-progress-spinner { width: 14px; height: 14px; flex: none; border: 2px solid var(--line); border-top-color: var(--green); border-radius: 50%; animation: ai-progress-spin 0.8s linear infinite; }
+@keyframes ai-progress-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-progress-spinner { animation-duration: 2.4s; } }
 .analytics-canvas { height: calc(100vh - 170px); min-height: 640px; margin-top: 12px; }
 .studio-revenue { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 4px 6px; }
 .studio-revenue strong { color: var(--green); font: 800 30px var(--heading-font); }

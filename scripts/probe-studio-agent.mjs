@@ -14,20 +14,16 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { encodeRequest } from '../src/analytics/nvidiaAdapter.js';
-import { AGENT_MODEL, STUDIO_AGENT_MODEL } from '../server/config.js';
+import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from '../server/config.js';
 import { nvidiaClient } from '../server/nvidia.js';
 import { buildNvidiaRequest, sanitizeCompletion } from '../server/studioAi.js';
 
 const TRIALS = Number(process.env.TRIALS) || 2;
 const TIMEOUT_MS = 120_000;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/studio-agent-requests.json', import.meta.url), 'utf8'));
-const THINKING = { enable_thinking: true, force_nonempty_content: true };
 
 const variants = [
-  { label: 'Ultra, thinking on (seat agent model)', model: AGENT_MODEL, templateKwargs: THINKING },
-  { label: 'Super, thinking on', model: STUDIO_AGENT_MODEL, templateKwargs: THINKING },
-  { label: 'Super, thinking off', model: STUDIO_AGENT_MODEL, templateKwargs: { enable_thinking: false } },
-  { label: 'Super, thinking on, $refs inlined', model: STUDIO_AGENT_MODEL, templateKwargs: THINKING, inlineRefs: true },
+  { label: 'Ultra, thinking on (app setting)', model: AGENT_MODEL, templateKwargs: AGENT_TEMPLATE_KWARGS },
 ];
 
 function checkToolCalls(request, message) {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { AGENT_MODEL, MAX_SEATS_PER_ORDER } from './config.js';
+import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS, MAX_SEATS_PER_ORDER } from './config.js';
 import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
@@ -165,8 +165,7 @@ export async function runAgent({ userId, messages, client = nvidiaClient('the se
       max_tokens: 16384,
       temperature: 1,
       top_p: 0.95,
-      // Required by NVIDIA's model card for this model to parse tool calls.
-      chat_template_kwargs: { enable_thinking: true, force_nonempty_content: true },
+      chat_template_kwargs: AGENT_TEMPLATE_KWARGS,
     });
 
     const message = response.choices?.[0]?.message;

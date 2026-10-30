@@ -23,6 +23,33 @@ const PANELS = {
   ask: { edit: { right: ['ai'] } },
 };
 
+// Studio runs a tool in the browser between proxy turns; the progress bar stays up through
+// that short gap instead of flickering off and on.
+const IDLE_GRACE_MS = 1500;
+
+// Visible while the assistant works: a question takes several model turns, often 10 to 25 seconds.
+function useAssistantProgress() {
+  const [startedAt, setStartedAt] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+  const idleTimer = useRef(null);
+  const onBusyChange = useRef((busy) => {
+    clearTimeout(idleTimer.current);
+    if (busy) setStartedAt((started) => started ?? Date.now());
+    else idleTimer.current = setTimeout(() => setStartedAt(null), IDLE_GRACE_MS);
+  }).current;
+
+  useEffect(() => () => clearTimeout(idleTimer.current), []);
+  useEffect(() => {
+    if (startedAt === null) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+
+  const seconds = startedAt === null ? null : Math.max(0, Math.round((now - startedAt) / 1000));
+  return { onBusyChange, seconds };
+}
+
 async function readResponse(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'The request could not be completed.');
@@ -37,15 +64,16 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable })
   const [mode, setMode] = useState('view');
   const tokenRef = useRef(accessToken);
   tokenRef.current = accessToken;
+  const { onBusyChange, seconds } = useAssistantProgress();
 
   // Studio's agents can only read this report's data and build widgets; every turn goes through
   // the sign-in-only proxy, which holds the NVIDIA key and refuses any non-Studio tool.
   const ai = useMemo(() => (assistantAvailable
     ? ({ api }) => createAiHarness(api, {
-      adapter: nvidiaStudioAdapter({ getAccessToken: () => tokenRef.current }),
+      adapter: nvidiaStudioAdapter({ getAccessToken: () => tokenRef.current, onBusyChange }),
       promptStarters: PROMPT_STARTERS,
     })
-    : undefined), [assistantAvailable]);
+    : undefined), [assistantAvailable, onBusyChange]);
 
   useEffect(() => {
     let active = true;
@@ -71,6 +99,15 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable })
         </div>
       </div>
       {error && <p className="notice" role="alert">{error}</p>}
+      <div className="ai-progress" role="status" aria-live="polite" hidden={seconds === null}>
+        {seconds !== null && (
+          <>
+            <span className="ai-progress-spinner" aria-hidden="true" />
+            <strong>Analytics assistant is working… {seconds}s</strong>
+            <span>Questions can take 10 to 25 seconds.</span>
+          </>
+        )}
+      </div>
       {!error && !data && <div className="grid-empty">Loading your orders…</div>}
       {data && (
         <div className="analytics-canvas">
