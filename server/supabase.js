@@ -23,10 +23,20 @@ export function isSupabaseConfigured() {
   }
 }
 
+export function publicSupabaseConfiguration() {
+  const { baseUrl, anonKey } = supabaseConfiguration();
+  if (anonKey.startsWith('sb_secret_')) {
+    throw Object.assign(new Error('SUPABASE_ANON_KEY must be a publishable key, not a secret key.'), { statusCode: 503 });
+  }
+  return { url: baseUrl, publishableKey: anonKey };
+}
+
+// sb_secret_ keys are not JWTs: Supabase accepts them only on the apikey header.
+// Legacy service_role JWTs still need the matching Bearer header.
 function serviceHeaders(serviceRoleKey, extra = {}) {
   return {
     apikey: serviceRoleKey,
-    Authorization: `Bearer ${serviceRoleKey}`,
+    ...(serviceRoleKey.startsWith('sb_secret_') ? {} : { Authorization: `Bearer ${serviceRoleKey}` }),
     'Content-Type': 'application/json',
     ...extra,
   };
@@ -34,6 +44,14 @@ function serviceHeaders(serviceRoleKey, extra = {}) {
 
 async function readJson(response) {
   return response.json().catch(() => ({}));
+}
+
+export function getBearerToken(authorization) {
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization || '');
+  if (!match) {
+    throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
+  }
+  return match[1];
 }
 
 export async function authenticateSupabaseUser(accessToken) {
@@ -57,7 +75,7 @@ export async function authenticateSupabaseUser(accessToken) {
   return { id: user.id };
 }
 
-export async function savePaypalOrder({ orderId, userId, studentName, amount, currency }) {
+export async function savePaypalOrder({ orderId, userId, studentName, quantity = 1, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
   const response = await fetch(`${baseUrl}/rest/v1/paypal_orders`, {
     method: 'POST',
@@ -66,6 +84,7 @@ export async function savePaypalOrder({ orderId, userId, studentName, amount, cu
       paypal_order_id: orderId,
       user_id: userId,
       student_name: studentName,
+      quantity,
       amount,
       currency,
       status: 'PENDING',
@@ -81,7 +100,7 @@ export async function savePaypalOrder({ orderId, userId, studentName, amount, cu
 export async function getPaypalOrder(orderId) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
   const query = new URLSearchParams({
-    select: 'paypal_order_id,user_id,student_name,amount,currency,status',
+    select: 'paypal_order_id,user_id,student_name,quantity,amount,currency,status,paypal_payments(capture_id)',
     paypal_order_id: `eq.${orderId}`,
     limit: '1',
   });
@@ -93,14 +112,39 @@ export async function getPaypalOrder(orderId) {
     throw Object.assign(new Error(`Could not read the PayPal order from Supabase (${response.status}).`), { statusCode: 502 });
   }
   if (!Array.isArray(rows) || !rows[0]) {
-    throw Object.assign(new Error('No Sentinel Learning account is associated with this PayPal order.'), { statusCode: 503 });
+    throw Object.assign(new Error('No seat order matches this PayPal order.'), { statusCode: 404 });
   }
   return rows[0];
 }
 
-export async function grantSentinelVoltAccess({ userId, orderId, captureId, status, amount, currency }) {
+// Reads only the verified user's orders: userId always comes from authenticateSupabaseUser.
+export async function listPaypalOrdersForUser(userId) {
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required.'), { statusCode: 401 });
+  }
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
-  const response = await fetch(`${baseUrl}/rest/v1/rpc/grant_sentinel_volt_access`, {
+  const query = new URLSearchParams({
+    select: 'paypal_order_id,student_name,quantity,amount,currency,status,created_at,paypal_payments(capture_id,created_at)',
+    user_id: `eq.${userId}`,
+    order: 'created_at.desc',
+    limit: '500',
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_orders?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read seat orders from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  return rows;
+}
+
+// Supabase function that records a verified capture and grants the seats (see supabase/migrations).
+export const SEAT_GRANT_FUNCTION = 'grant_seat_access';
+
+export async function grantSeatAccess({ userId, orderId, captureId, status, amount, currency }) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/rpc/${SEAT_GRANT_FUNCTION}`, {
     method: 'POST',
     headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
     body: JSON.stringify({
@@ -114,6 +158,20 @@ export async function grantSentinelVoltAccess({ userId, orderId, captureId, stat
   });
   if (!response.ok) {
     await readJson(response);
-    throw Object.assign(new Error(`Supabase could not grant Sentinel Volt access (${response.status}).`), { statusCode: 502 });
+    throw Object.assign(new Error(`Supabase could not grant seat access (${response.status}).`), { statusCode: 502 });
+  }
+}
+
+export async function logAgentAction({ userId, action, details = {} }) {
+  try {
+    const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+    const response = await fetch(`${baseUrl}/rest/v1/agent_actions`, {
+      method: 'POST',
+      headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
+      body: JSON.stringify({ user_id: userId, action, details }),
+    });
+    if (!response.ok) console.warn(`Agent action "${action}" was not logged (Supabase ${response.status}).`);
+  } catch (error) {
+    console.warn(`Agent action "${action}" was not logged: ${error.message}`);
   }
 }

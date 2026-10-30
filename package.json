@@ -7,18 +7,28 @@
     "dev": "node --watch server/index.js",
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js",
-    "test": "node --test server/*.test.js"
+    "test": "node --test server/*.test.js src/analytics/*.test.js",
+    "probe:studio-agent": "node scripts/probe-studio-agent.mjs",
+    "time:ask-ai": "node scripts/time-ask-ai.mjs"
+  },
+  "engines": {
+    "node": ">=22.12"
   },
   "dependencies": {
-    "ag-grid-community": "*",
-    "ag-grid-react": "*",
+    "@supabase/supabase-js": "^2.118.0",
+    "ag-grid-community": "36.2.0",
+    "ag-grid-react": "36.2.0",
+    "ag-studio": "3.0.0",
+    "ag-studio-react": "3.0.0",
     "dotenv": "*",
     "express": "*",
     "lucide-react": "*",
+    "openai": "^7.45.1",
     "react": "*",
     "react-dom": "*"
   },
   "devDependencies": {
-    "vite": "*"
+    "vite": "*",
+    "playwright": "1.63.0"
   }
 }

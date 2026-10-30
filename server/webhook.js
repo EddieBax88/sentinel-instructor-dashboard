@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import { verifySandboxWebhook } from './paypal.js';
-import { getPendingOrder, unlockSeatsFromVerifiedCapture } from './seatUnlock.js';
-import { getPaypalOrder, grantSentinelVoltAccess } from './supabase.js';
+import { verifyCaptureForOrder, verifySandboxWebhook } from './paypal.js';
+import { getPaypalOrder, grantSeatAccess } from './supabase.js';
 
 const router = Router();
 
@@ -26,14 +25,11 @@ router.post('/', async (request, response) => {
       }
 
       const order = await getPaypalOrder(orderId);
-      const pendingOrder = getPendingOrder(orderId);
-      if (pendingOrder) {
-        if (pendingOrder.userId !== order.user_id) {
-          throw Object.assign(new Error('PayPal order account association does not match the stored account.'), { statusCode: 409 });
-        }
-        unlockSeatsFromVerifiedCapture({ ...capture, source: 'verified-webhook' });
+      if (order.status === 'COMPLETED') {
+        return response.json({ received: true, unlocked: false, alreadyCaptured: true, transactionId: capture.captureId });
       }
-      await grantSentinelVoltAccess({ userId: order.user_id, ...capture });
+      const verifiedCapture = verifyCaptureForOrder(order, capture);
+      await grantSeatAccess({ userId: order.user_id, orderId, ...verifiedCapture });
       return response.json({ received: true, unlocked: true, transactionId: capture.captureId });
     }
 

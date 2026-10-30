@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import {
   authenticateSupabaseUser,
   getPaypalOrder,
-  grantSentinelVoltAccess,
+  grantSeatAccess,
+  listPaypalOrdersForUser,
+  publicSupabaseConfiguration,
   savePaypalOrder,
+  SEAT_GRANT_FUNCTION,
 } from './supabase.js';
 
 const originalFetch = globalThis.fetch;
@@ -58,6 +61,7 @@ test('persists account association for a created PayPal order', async () => {
       paypal_order_id: 'ORDER-1',
       user_id: 'user-123',
       student_name: 'Avery',
+      quantity: 1,
       amount: '49.00',
       currency: 'USD',
       status: 'PENDING',
@@ -92,9 +96,9 @@ test('reads the durable user association by PayPal order id', async () => {
   assert.equal((await getPaypalOrder('ORDER-1')).user_id, 'user-123');
 });
 
-test('calls the atomic Sentinel Volt entitlement grant function', async () => {
+test('calls the atomic seat grant function', async () => {
   globalThis.fetch = async (url, options) => {
-    assert.equal(url, 'https://example.supabase.co/rest/v1/rpc/grant_sentinel_volt_access');
+    assert.equal(url, `https://example.supabase.co/rest/v1/rpc/${SEAT_GRANT_FUNCTION}`);
     assert.equal(options.method, 'POST');
     assert.equal(options.headers.Authorization, 'Bearer test-service-role-key');
     assert.deepEqual(JSON.parse(options.body), {
@@ -108,7 +112,7 @@ test('calls the atomic Sentinel Volt entitlement grant function', async () => {
     return new Response(null, { status: 204 });
   };
 
-  await grantSentinelVoltAccess({
+  await grantSeatAccess({
     userId: 'user-123',
     orderId: 'ORDER-1',
     captureId: 'CAPTURE-1',
@@ -116,4 +120,51 @@ test('calls the atomic Sentinel Volt entitlement grant function', async () => {
     amount: '49.00',
     currency: 'USD',
   });
+});
+
+test('sends sb_secret_ keys only on the apikey header', async () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers.apikey, 'sb_secret_test');
+    assert.equal(options.headers.Authorization, undefined);
+    return new Response(null, { status: 201 });
+  };
+
+  await savePaypalOrder({
+    orderId: 'ORDER-1',
+    userId: 'user-123',
+    studentName: 'Avery',
+    amount: '49.00',
+    currency: 'USD',
+  });
+});
+
+test('exposes only the URL and publishable key to the browser', () => {
+  assert.deepEqual(publicSupabaseConfiguration(), { url: 'https://example.supabase.co', publishableKey: 'test-anon-key' });
+  process.env.SUPABASE_ANON_KEY = 'sb_secret_test';
+  assert.throws(() => publicSupabaseConfiguration(), { statusCode: 503 });
+});
+
+test("reads only the verified user's orders, with the secret key on the server", async () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'sb_secret_test';
+  globalThis.fetch = async (url, options) => {
+    const requestUrl = new URL(url);
+    assert.equal(requestUrl.pathname, '/rest/v1/paypal_orders');
+    assert.equal(requestUrl.searchParams.get('user_id'), 'eq.user-123');
+    assert.match(requestUrl.searchParams.get('select'), /quantity/);
+    assert.match(requestUrl.searchParams.get('select'), /paypal_payments\(capture_id/);
+    assert.equal(options.headers.apikey, 'sb_secret_test');
+    return Response.json([{ paypal_order_id: 'ORDER-1', quantity: 30, amount: 1470, status: 'PENDING' }]);
+  };
+
+  const rows = await listPaypalOrdersForUser('user-123');
+  assert.equal(rows[0].quantity, 30);
+});
+
+test('refuses to list orders without a verified user id and surfaces Supabase errors', async () => {
+  globalThis.fetch = async () => { throw new Error('Unexpected request'); };
+  await assert.rejects(listPaypalOrdersForUser(undefined), { statusCode: 401 });
+
+  globalThis.fetch = async () => Response.json({ message: 'permission denied' }, { status: 401 });
+  await assert.rejects(listPaypalOrdersForUser('user-123'), { statusCode: 502 });
 });
