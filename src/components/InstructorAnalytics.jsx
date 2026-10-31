@@ -1,8 +1,9 @@
-import { AgStudioAiModule, createAiHarness, enableStudioDevValidations } from 'ag-studio';
+import { AgStudioAiModule, createAiHarness, directLlmRunner, enableStudioDevValidations } from 'ag-studio';
 import { AgStudio, AgStudioProvider } from 'ag-studio-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nvidiaStudioAdapter } from '../analytics/nvidiaAdapter.js';
 import { initialReport } from '../analytics/initialReport.js';
+import { studioHarnessConfig } from '../analytics/studioAgents.js';
 import { buildStudioData } from '../analytics/studioData.js';
 import { instructorStudioTheme } from '../analytics/theme.js';
 import { studioWidgets } from '../analytics/widgets.jsx';
@@ -67,12 +68,14 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable })
   const { onBusyChange, seconds } = useAssistantProgress();
 
   // Studio's agents can only read this report's data and build widgets; every turn goes through
-  // the sign-in-only proxy, which holds the NVIDIA key and refuses any non-Studio tool.
+  // the sign-in-only proxy, which holds the NVIDIA key and refuses any non-Studio tool. The agents
+  // are tuned for fewer, shorter turns (src/analytics/studioAgents.js).
   const ai = useMemo(() => (assistantAvailable
-    ? ({ api }) => createAiHarness(api, {
+    ? ({ api }) => createAiHarness(api, (ctx) => studioHarnessConfig(ctx, {
       adapter: nvidiaStudioAdapter({ getAccessToken: () => tokenRef.current, onBusyChange }),
+      directLlmRunner,
       promptStarters: PROMPT_STARTERS,
-    })
+    }))
     : undefined), [assistantAvailable, onBusyChange]);
 
   useEffect(() => {
