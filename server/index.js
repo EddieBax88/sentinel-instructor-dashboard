@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
 import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
+import { isAnthropicConfigured } from './anthropic.js';
 import analyticsRouter from './analytics.js';
 import studioAiRouter from './studioAi.js';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
@@ -30,7 +31,7 @@ app.get('/api/dashboard', (_request, response) => {
   response.json({
     paymentAvailable,
     agentAvailable: paymentAvailable && isAgentConfigured(),
-    analyticsAssistantAvailable: isSupabaseConfigured() && isAgentConfigured(),
+    analyticsAssistantAvailable: isSupabaseConfigured() && isAnthropicConfigured(),
   });
 });
 

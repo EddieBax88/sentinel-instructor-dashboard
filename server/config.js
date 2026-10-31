@@ -12,5 +12,10 @@ export const AGENT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 // Required by NVIDIA's model card for this model to parse tool calls.
 export const AGENT_TEMPLATE_KWARGS = { enable_thinking: true, force_nonempty_content: true };
 
-// The AG Studio analytics agent (Ask AI) uses the same model and settings as the seat assistant.
-// `npm run probe:studio-agent` checks this model on Studio's real tool definitions.
+// The AG Studio analytics agent (Ask AI) runs on Anthropic Claude through the Messages API.
+// STUDIO_AI_MODEL in .env overrides the model without a code change. The default is a placeholder
+// until `npm run probe:studio-agent` has compared models and effort levels live.
+export const STUDIO_AI_DEFAULT_MODEL = 'claude-sonnet-5-5';
+export const studioAiModel = () => process.env.STUDIO_AI_MODEL || STUDIO_AI_DEFAULT_MODEL;
+// Thinking stays on (the model's default); effort sets how much it thinks per turn.
+export const STUDIO_AI_EFFORT = 'low';

@@ -98,7 +98,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable })
         <div className="analytics-modes" role="group" aria-label="Report mode">
           <button type="button" className={mode === 'view' ? 'active' : ''} onClick={() => setMode('view')}>View</button>
           <button type="button" className={mode === 'edit' ? 'active' : ''} onClick={() => setMode('edit')}>Edit layout</button>
-          <button type="button" className={mode === 'ask' ? 'active' : ''} onClick={() => setMode('ask')} disabled={!assistantAvailable} title={assistantAvailable ? 'Ask the analytics assistant' : 'Add NVIDIA_API_KEY to .env to enable the assistant'}>Ask AI</button>
+          <button type="button" className={mode === 'ask' ? 'active' : ''} onClick={() => setMode('ask')} disabled={!assistantAvailable} title={assistantAvailable ? 'Ask the analytics assistant' : 'Add ANTHROPIC_API_KEY to .env to enable the assistant'}>Ask AI</button>
         </div>
       </div>
       {error && <p className="notice" role="alert">{error}</p>}

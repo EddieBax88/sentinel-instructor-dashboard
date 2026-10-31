@@ -6,8 +6,8 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). PR #1 (draft) is open against `main`. Never merge to `main` without Eddie.
 - Branch: `ccr-1d301b90-3tuzmz`.
-- Latest code commit: `0335ec7` (this file is committed on top of it).
-- Tests: `npm test`, 73/73 pass. No network calls in tests.
+- Latest code commit: the "Ask AI on Anthropic Claude" commit (this file is updated in it).
+- Tests: `npm test`, 86/86 pass. No network calls in tests (one test runs the real Anthropic SDK against a local stub server).
 - Node: `engines.node` is `>=22.12` (Supabase and openai packages need 22; Vite needs 22.12).
 - No Vercel project exists for this repo yet.
 
@@ -21,7 +21,7 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
 ## Stack
 
-Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sandbox, NVIDIA hosted API (OpenAI-compatible, `openai` SDK), AG Studio 3.0.0 with AG Grid pinned to 36.2.0. No AG Studio license yet (watermark is fine).
+Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sandbox, NVIDIA hosted API (OpenAI-compatible, `openai` SDK) for the seat agent, Anthropic Messages API (`@anthropic-ai/sdk` 1.3.0) for Ask AI, AG Studio 3.0.0 with AG Grid pinned to 36.2.0. No AG Studio license yet (watermark is fine).
 
 ## Verified working (on Eddie's machine unless noted)
 
@@ -40,6 +40,7 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 ## Not yet verified live
 
+- Ask AI on Claude (built against fakes, no live key yet): proxy translation, streaming with 10 s first-content retry, refusal as a clean 422 error, timing rows, probe settings. Default model `claude-sonnet-5-5`, effort `low` (`server/config.js`) is a placeholder until the live probe.
 - `0335ec7`: widget agent told not to re-call `configure_widget` on health results (only on `success: false`); turns streamed with a 10 s first-chunk retry; `STUDIO_AI_TIMING` rows with `ttftMs` and `toolResults`. Tested against fakes and a local server with the real `openai` SDK only. Open risk: the proxy sends `stream_options: { include_usage: true }` to NVIDIA, untested there.
 - `npm run time:ask-ai` (headless harness) hung on Eddie's machine before the 5-minute timeout was added in `77a5697`; not debugged.
 
@@ -47,54 +48,34 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 - `src/analytics/nvidiaAdapter.js`: browser-side AG Studio LLM adapter. Posts OpenAI Chat Completions-shaped bodies to `POST /api/studio-ai/chat`; decodes `{ id, model, message, finish_reason, usage }` replies. Reports busy state for the progress bar.
 - `src/analytics/studioAgents.js`: AG Studio's five built-in agents with preloaded `view_report` / `view_schema` / `view_page`, no-recheck rules, the widget health rule, and one-sentence summaries.
-- `server/studioAi.js`: sign-in-only proxy. Validates Studio-only tools, builds the model request, streams with the first-chunk retry (`completeTurn`), strips reasoning, logs per-turn rows when `STUDIO_AI_TIMING=1`.
+- `server/studioAi.js`: sign-in-only proxy. Validates Studio-only tools, translates to and from the Messages API, streams with the first-content retry (`completeAnthropicTurn`), drops thinking, logs per-turn rows when `STUDIO_AI_TIMING=1`. NVIDIA builders (`buildNvidiaRequest`, `completeTurn`) kept for the probe baseline and `time:ask-ai`.
+- `server/anthropic.js`: Anthropic client (`ANTHROPIC_API_KEY`).
+- `scripts/check-strict-tools.mjs`: offline strict-mode check of the captured Studio schemas.
 - `server/config.js`: `AGENT_MODEL`, `AGENT_TEMPLATE_KWARGS` (shared by the seat agent and, today, Ask AI).
 - `scripts/probe-studio-agent.mjs`: replays `scripts/fixtures/studio-agent-requests.json` (first turn of each Studio agent) against the model.
 - `scripts/time-ask-ai.mjs` + `scripts/ask-ai-harness/`: times one question end to end in headless Chromium.
 
-## Approved plan: Ask AI on Anthropic Claude (not built)
+## Ask AI on Anthropic Claude (built against fakes)
 
-Decision: Ask AI moves from NVIDIA to Anthropic Claude via the native `@anthropic-ai/sdk`. The seat agent stays on NVIDIA. Anthropic API credits expected ~Nov 2.
+Built per the approved plan in `server/studioAi.js` (`buildAnthropicRequest`, `toStudioReply`, `completeAnthropicTurn`, `describeAnthropicTurn`), `server/anthropic.js`, `server/config.js` and `scripts/probe-studio-agent.mjs`. The browser adapter and its request/response shape are unchanged. The NVIDIA proxy functions stay for the probe's baseline.
 
-Proxy changes (`server/studioAi.js`; the browser adapter and its request/response shape stay unchanged):
+One plan item not built: strict tools. `npm run check:strict-tools` checks AG Studio's captured schemas against Anthropic's strict rules (structured-outputs docs, read 2026-10-31). Every object already has `additionalProperties: false`, but:
 
-1. Client: `@anthropic-ai/sdk`, Messages API, streaming.
-2. Request translation (incoming OpenAI-shaped body → Messages API):
-   - System messages → top-level `system`.
-   - Tool definitions → Anthropic `tools` (`name`, `description`, `input_schema`).
-   - Assistant `tool_calls` in history → `tool_use` blocks.
-   - `role: "tool"` results → `tool_result` blocks, all results of one round in a single user message.
-   - `tool_choice`: forced choices (`tool` / `any`) become `auto` (forced choice returns 400 on Sonnet 5.5).
-   - `response_format` (JSON schema) → `output_config.format`.
-   - Drop `chat_template_kwargs`, `temperature`, `top_p` (non-default sampling returns 400 on Haiku 5.5 and Sonnet 5.5).
-   - Thinking left on (model default); speed via `output_config.effort`, starting at `low`.
-3. Strict tools: every tool sent with `strict: true`, and `additionalProperties: false` on every object in its schema. When building, check AG Studio's schemas (`$defs`/`$ref`, `anyOf`, optional properties) against the strict-mode schema rules in Anthropic's docs.
-4. Turns with no tool call: return the text reply as a normal message with no `tool_calls` (Studio then ends or continues the run as it does today).
-5. Refusals: no server-side fallback. `stop_reason: "refusal"` is returned to the browser as a clean error.
-6. Response translation (Messages API → today's reply shape): text → `message.content`; `tool_use` blocks → `message.tool_calls` (arguments JSON-stringified); stop reason → `finish_reason` (`tool_use` → `tool_calls`, `max_tokens` → `length`, otherwise `stop`); usage → `usage`.
-7. First-token retry kept: 10 s deadline, measured to the first content event (not `message_start`, which arrives at once); once content flows, never abort; one retry with no deadline.
-8. `STUDIO_AI_TIMING` kept: agent, latency, `ttftMs`, input/output tokens from Messages usage, tools called, `toolResults`, retry fields. Thinking text is not returned by default, so the thinking-token estimate from text length no longer applies.
+- Rule failures: `execute_query` (recursive `$defs`, `not: {}`, `minItems`/`maxItems` 2), `create_expression` (recursive), `create_plan` (recursive layout `$defs`), `add_widget_filter` and `add_page_filter` (`minItems`/`maxItems` 2), `configure_widget` (`minimum`, `exclusiveMinimum`).
+- Per-request limits (24 optional params, 16 union params): data agent 42/36, widget agent 186/31, page agent 24/20. Only the lead agent passes everything.
+- `update_expression` and `delete_expression` are on the allowlist but not in the captured fixtures, so they are unchecked.
 
-Probe changes (`scripts/probe-studio-agent.mjs`):
+Tools are sent without `strict: true` until Eddie decides how to handle this.
 
-- Each setting gets a provider (NVIDIA or Anthropic) and runs through the same proxy request path as the app.
-- Settings: `claude-haiku-5-5` effort `low` and `medium`; `claude-sonnet-5-5` effort `low` and `medium`; Ultra kept as baseline.
-- Same pass check (valid tool call with required fields) and 5 agents × 2 trials.
-- Anthropic settings skipped with a note when `ANTHROPIC_API_KEY` is unset.
-
-Env vars:
-
-- `ANTHROPIC_API_KEY` (new)
-- `NVIDIA_API_KEY` (kept, for the seat agent)
-- `STUDIO_AI_MODEL` (optional, new): picks the Claude model for Ask AI without a code change.
+`npm run time:ask-ai` still times the NVIDIA path; it was not part of the plan.
 
 ## Next task
 
-Build the approved Anthropic plan against fakes (no live key yet): proxy translation, strict tools, no-tool-call turns, refusal error, streaming first-token retry, timing rows, probe settings. All tests must pass. Commit, push to `ccr-1d301b90-3tuzmz`, report commit hash, test count and run steps, then stop.
+Eddie decides on strict tools (see above). Then the live probe and Ask AI timing on Claude once the key works; pick model and effort.
 
 ## Remaining after that (in order, one at a time)
 
-1. Live probe and Ask AI timing on Claude once the key works; pick model and effort.
+1. (Next task above.)
 2. Hosted demo URL (free tier) + README setup/run instructions + test account details for judges.
 3. Demo-video polish; clear test clutter (an old 30-seat pending order). Set the progress bar copy from measured timings.
 4. Around Nov 5: AG Studio trial license key via env, served to the browser like the Supabase publishable key.
