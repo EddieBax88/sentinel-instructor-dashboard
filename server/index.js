@@ -2,98 +2,13 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer as createViteServer } from 'vite';
-import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
-import { isAnthropicConfigured } from './anthropic.js';
-import analyticsRouter from './analytics.js';
-import studioAiRouter from './studioAi.js';
-import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
-import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, publicSupabaseConfiguration } from './supabase.js';
-import webhookRouter from './webhook.js';
-import { dashboardFromOrders } from './seatUnlock.js';
+import app from './app.js';
 
+// Local server: the API from server/app.js plus the client, built (`npm start`) or through Vite's
+// dev middleware (`npm run dev`). On Vercel, api/index.js serves the API and dist/ is static.
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(currentDirectory, '..');
 const clientBuildDirectory = path.join(projectDirectory, 'dist');
-const app = express();
-
-
-app.disable('x-powered-by');
-// Mounted before the app-wide JSON parser: Studio's agent requests need a larger body limit.
-app.use('/api/studio-ai', studioAiRouter);
-app.use(express.json({
-  verify: (request, _response, buffer) => {
-    if (request.originalUrl.startsWith('/api/paypal/webhook')) request.rawBody = Buffer.from(buffer);
-  },
-}));
-app.get('/api/dashboard', (_request, response) => {
-  const paymentAvailable = isPaypalConfigured() && isSupabaseConfigured();
-  response.json({
-    paymentAvailable,
-    agentAvailable: paymentAvailable && isAgentConfigured(),
-    analyticsAssistantAvailable: isSupabaseConfigured() && isAnthropicConfigured(),
-  });
-});
-
-// The ledger is per instructor: the user ID comes only from the verified access token.
-app.get('/api/ledger', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    response.json(dashboardFromOrders(await listPaypalOrdersForUser(user.id)));
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.use('/api/analytics', analyticsRouter);
-
-app.get('/api/supabase-config', (_request, response) => {
-  try {
-    response.json(publicSupabaseConfiguration());
-  } catch (error) {
-    response.status(error.statusCode || 503).json({ error: error.message });
-  }
-});
-
-app.post('/api/paypal/orders', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    const order = await createSandboxOrder({ studentName: request.body?.studentName, userId: user.id });
-    response.status(201).json(order);
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.post('/api/paypal/orders/:orderId/capture', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    response.json(await captureSandboxOrder(request.params.orderId, user.id));
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.post('/api/agent/chat', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    response.json(await runAgent({ userId: user.id, messages: request.body?.messages }));
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.post('/api/agent/proposals/:proposalId/confirm', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    response.status(201).json(await confirmProposal({ proposalId: request.params.proposalId, userId: user.id }));
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.use('/api/paypal/webhook', webhookRouter);
-app.get('/api/health', (_request, response) => response.json({ status: 'ok', environment: 'sandbox-only' }));
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientBuildDirectory));
@@ -102,6 +17,7 @@ if (process.env.NODE_ENV === 'production') {
     response.sendFile(path.join(clientBuildDirectory, 'index.html'));
   });
 } else {
+  const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
     configFile: path.join(projectDirectory, 'vite.config.js'),
     server: { middlewareMode: true },

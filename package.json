@@ -13,7 +13,7 @@
     "time:ask-ai": "node scripts/time-ask-ai.mjs"
   },
   "engines": {
-    "node": ">=22.12"
+    "node": "22.x"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

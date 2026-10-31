@@ -3,7 +3,7 @@ import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS, MAX_SEATS_PER_ORDER } from './confi
 import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
-import { listPaypalOrdersForUser, logAgentAction } from './supabase.js';
+import { claimSeatProposal, getSeatProposal, listPaypalOrdersForUser, logAgentAction, saveSeatProposal } from './supabase.js';
 
 const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
@@ -49,8 +49,6 @@ const TOOL_DEFINITIONS = [
   },
 ];
 const TOOLS = TOOL_DEFINITIONS.map((definition) => ({ type: 'function', function: definition }));
-
-const proposals = new Map();
 
 export const isAgentConfigured = isNvidiaConfigured;
 export { replyText };
@@ -98,7 +96,7 @@ export async function executeTool(name, input, { userId }) {
       currency: SEAT_PRICING.currency,
       expiresAt: Date.now() + PROPOSAL_TTL_MS,
     };
-    proposals.set(proposal.id, proposal);
+    await saveSeatProposal(proposal);
     await logAgentAction({ userId, action: 'order_proposed', details: { proposalId: proposal.id, quantity, className, total: proposal.total } });
     return {
       result: { ...publicProposal(proposal), status: 'AWAITING_INSTRUCTOR_CONFIRMATION' },
@@ -209,18 +207,20 @@ export async function runAgent({ userId, messages, client = nvidiaClient('the se
   return { reply, proposal };
 }
 
+// Proposals live in Supabase (seat_proposals), so any server instance can confirm one. Claiming
+// deletes it, so each proposal is confirmed at most once.
 export async function confirmProposal({ proposalId, userId }) {
-  const proposal = proposals.get(proposalId);
-  if (!proposal || proposal.expiresAt < Date.now()) {
-    proposals.delete(proposalId);
+  const now = Date.now();
+  const proposal = await claimSeatProposal({ proposalId, userId, now });
+  if (!proposal) {
+    const existing = await getSeatProposal(proposalId);
+    if (existing && existing.userId !== userId && existing.expiresAt > now) {
+      await logAgentAction({ userId, action: 'confirm_rejected', details: { proposalId, reason: 'different account' } });
+      throw Object.assign(new Error('This seat proposal belongs to a different account.'), { statusCode: 403 });
+    }
     throw Object.assign(new Error('This seat proposal expired or does not exist. Ask the assistant again.'), { statusCode: 404 });
   }
-  if (proposal.userId !== userId) {
-    await logAgentAction({ userId, action: 'confirm_rejected', details: { proposalId, reason: 'different account' } });
-    throw Object.assign(new Error('This seat proposal belongs to a different account.'), { statusCode: 403 });
-  }
 
-  proposals.delete(proposalId);
   try {
     const order = await createSandboxOrder({ studentName: proposal.className, userId, quantity: proposal.quantity });
     await logAgentAction({ userId, action: 'order_created', details: { proposalId, orderId: order.orderId, quantity: order.quantity, total: order.amount } });
@@ -229,8 +229,4 @@ export async function confirmProposal({ proposalId, userId }) {
     await logAgentAction({ userId, action: 'order_failed', details: { proposalId, reason: error.message } });
     throw error;
   }
-}
-
-export function resetAgentState() {
-  proposals.clear();
 }

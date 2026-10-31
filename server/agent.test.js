@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, replyText, resetAgentState, runAgent, validateSeatRequest } from './agent.js';
+import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, replyText, runAgent, validateSeatRequest } from './agent.js';
 import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -12,6 +12,18 @@ let loggedActions;
 let paypalRequests;
 let storedOrders;
 let orderQueries;
+let storedProposals;
+
+// PostgREST filters this fake understands on seat_proposals: eq on id and user_id, gt on expires_at.
+function matchesFilters(row, params) {
+  for (const [key, value] of params) {
+    if (key === 'select' || key === 'limit') continue;
+    const [operator, operand] = [value.slice(0, value.indexOf('.')), value.slice(value.indexOf('.') + 1)];
+    if (operator === 'eq' && String(row[key]) !== operand) return false;
+    if (operator === 'gt' && !(Date.parse(row[key]) > Date.parse(operand))) return false;
+  }
+  return true;
+}
 
 function fakeFetch(paypalHandler) {
   return async (url, options = {}) => {
@@ -19,6 +31,16 @@ function fakeFetch(paypalHandler) {
     if (hostname === 'example.supabase.co' && pathname === '/rest/v1/agent_actions') {
       loggedActions.push(JSON.parse(options.body));
       return new Response(null, { status: 201 });
+    }
+    if (hostname === 'example.supabase.co' && pathname === '/rest/v1/seat_proposals') {
+      const params = new URL(url).searchParams;
+      if (options.method === 'POST') {
+        storedProposals.push(JSON.parse(options.body));
+        return new Response(null, { status: 201 });
+      }
+      const matched = storedProposals.filter((row) => matchesFilters(row, params));
+      if (options.method === 'DELETE') storedProposals = storedProposals.filter((row) => !matched.includes(row));
+      return Response.json(matched);
     }
     if (hostname === 'example.supabase.co' && pathname === '/rest/v1/paypal_orders') {
       if (options.method === 'POST') {
@@ -62,7 +84,7 @@ const textReply = (content) => completion({ content }, 'stop');
 const refusal = () => completion({ content: null, refusal: 'Declined.' }, 'stop');
 
 test.beforeEach(() => {
-  resetAgentState();
+  storedProposals = [];
   loggedActions = [];
   paypalRequests = [];
   storedOrders = [];
@@ -335,4 +357,51 @@ test('removes think blocks and unclosed reasoning, and never returns separate re
   const onlyReasoning = scriptedClient([textReply('I should check pricing first.</think>')]);
   const fallback = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client: onlyReasoning });
   assert.ok(!fallback.reply.includes('pricing first'));
+});
+
+test('a proposal is stored in Supabase with a 10-minute expiry, and confirming removes it there', async () => {
+  globalThis.fetch = fakeFetch(async (pathname) => {
+    if (pathname === '/v1/oauth2/token') return Response.json({ access_token: 'sandbox-token', expires_in: 3600 });
+    if (pathname === '/v2/checkout/orders') return Response.json({ id: 'ORDER-3', status: 'PAYER_ACTION_REQUIRED', links: [{ rel: 'payer-action', href: 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER-3' }] });
+    throw new Error(`Unexpected PayPal path ${pathname}`);
+  });
+  const before = Date.now();
+  const { proposal } = await executeTool('create_seat_order', { quantity: 3, class_name: 'Night class' }, { userId: INSTRUCTOR });
+
+  assert.equal(storedProposals.length, 1);
+  const [row] = storedProposals;
+  assert.deepEqual({ ...row, expires_at: undefined }, {
+    id: proposal.id, user_id: INSTRUCTOR, quantity: 3, class_name: 'Night class', unit_price: '49.00', total: '147.00', currency: 'USD', expires_at: undefined,
+  });
+  const ttl = Date.parse(row.expires_at) - before;
+  assert.ok(ttl >= 10 * 60 * 1000 - 5 && ttl <= 10 * 60 * 1000 + 1000, `expiry ${ttl} ms`);
+
+  // Confirmation reads only Supabase, as a fresh server instance would.
+  const order = await confirmProposal({ proposalId: proposal.id, userId: INSTRUCTOR });
+  assert.equal(order.amount, '147.00');
+  assert.equal(storedProposals.length, 0);
+});
+
+test('a malformed proposal ID is a 404 without a Supabase or PayPal call', async () => {
+  let supabaseCalls = 0;
+  const inner = fakeFetch();
+  globalThis.fetch = async (url, options) => {
+    if (new URL(url).pathname === '/rest/v1/seat_proposals') supabaseCalls += 1;
+    return inner(url, options);
+  };
+  await assert.rejects(confirmProposal({ proposalId: 'not-a-uuid', userId: INSTRUCTOR }), { statusCode: 404 });
+  await assert.rejects(confirmProposal({ proposalId: "x' or 1=1", userId: INSTRUCTOR }), { statusCode: 404 });
+  assert.equal(supabaseCalls, 0);
+  assert.equal(paypalRequests.length, 0);
+});
+
+test('if Supabase cannot store the proposal, the assistant gets a tool error and no proposal', async () => {
+  const inner = fakeFetch();
+  globalThis.fetch = async (url, options = {}) => {
+    if (new URL(url).pathname === '/rest/v1/seat_proposals' && options.method === 'POST') return Response.json({ message: 'down' }, { status: 503 });
+    return inner(url, options);
+  };
+  await assert.rejects(executeTool('create_seat_order', { quantity: 2, class_name: 'Fall class' }, { userId: INSTRUCTOR }), { statusCode: 502 });
+  assert.equal(storedProposals.length, 0);
+  assert.ok(!loggedActions.some((row) => row.action === 'order_proposed'));
 });

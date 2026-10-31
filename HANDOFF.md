@@ -6,10 +6,10 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). PR #1 (draft) is open against `main`. Never merge to `main` without Eddie.
 - Branch: `ccr-1d301b90-3tuzmz`.
-- Latest code commit: the "Ask AI on Anthropic Claude" commit (this file is updated in it).
-- Tests: `npm test`, 86/86 pass. No network calls in tests (one test runs the real Anthropic SDK against a local stub server).
-- Node: `engines.node` is `>=22.12` (Supabase and openai packages need 22; Vite needs 22.12).
-- No Vercel project exists for this repo yet.
+- Latest code commit: the "Prepare Vercel deploy" commit (this file is updated in it).
+- Tests: `npm test`, 92/92 pass. No network calls in tests (one test runs the real Anthropic SDK against a local stub server).
+- Node: `engines.node` is `22.x` (Vercel deploys Node 26 for `>=22`; Supabase and openai need 22, Vite needs 22.12).
+- No Vercel project exists yet. Code is ready for it: `server/app.js` (the API), `api/index.js` (Vercel Function entry), `vercel.json`. Plan: Hobby.
 
 ## Hard rules
 
@@ -28,6 +28,7 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 - Seat agent (NVIDIA Nemotron 3 Ultra, `nvidia/nemotron-3-ultra-550b-a55b`): plain English → server-priced proposal → Confirm → PayPal Sandbox → capture → seats granted. Off-topic requests blocked server-side. Reasoning text stripped.
 - Ledger and capture read from Supabase, scoped to the signed-in instructor. Idempotent.
 - Migrations run, in order: `20261027054700_paypal_orders_and_entitlements.sql`, `20261028150000_agent_actions_and_seat_quantity.sql`, `20261028200000_rename_seat_grant.sql`.
+- NOT yet run: `20261031180000_seat_proposals.sql` (seat proposals in Supabase). Eddie runs it in the hackathon project's SQL editor. Until then the seat assistant's create_seat_order fails with a Supabase error.
 - Instructor analytics view (AG Studio): KPIs, charts, by-class grid, custom widgets, theme.
 - Ask AI on Ultra (`5a216f7`): "Add a column chart of revenue by class" and "Add a pie chart of seats unlocked vs pending" both produced correct widgets. Progress bar shows and counts.
 - Probe (`77a5697`, `npm run probe:studio-agent`), 5 Studio agents × 2 trials:
@@ -90,9 +91,20 @@ Per-request limits (24 optional params, 16 union params, 20 strict tools):
 
 `npm run time:ask-ai` still times the NVIDIA path; it was not part of the plan.
 
+## Vercel deploy (code prep done)
+
+- `server/app.js`: the Express app, all `/api` routes; no Vite, no listener. `server/index.js` adds the client (Vite dev middleware, or `dist/` with `NODE_ENV=production`) and listens, for local use.
+- `api/index.js`: the single Vercel Function. `vercel.json` rewrites `/api/:route*` to `/api?__route=:route*` (Vercel's rewrite docs show path params arriving as query params) and `api/index.js` rebuilds `/api/<route>` before Express routes it. Everything else rewrites to `/index.html`; files in `dist/` are served first.
+- Seat proposals: Supabase table `seat_proposals` (10-minute expiry, server-only). Confirm claims the row with one DELETE (owner + not expired), so it works on any instance and only once.
+- Webhook raw body: required. `verifySandboxWebhook` (`server/paypal.js`) posts the raw event bytes back to `/v1/notifications/verify-webhook-signature`, and PayPal's webhook docs (developer.paypal.com/api/rest/webhooks/rest/, "Postback method") say the event must be posted back exactly as received; re-serialized JSON can fail. So on Vercel set `NODEJS_HELPERS=0` (Vercel docs: functions/runtimes/node-js/advanced-node-configuration) so the body is not pre-parsed.
+
+Vercel env vars (Production): `SUPABASE_URL`, `SUPABASE_ANON_KEY` (publishable), `SUPABASE_SERVICE_ROLE_KEY`*, `PAYPAL_CLIENT_ID`*, `PAYPAL_SECRET`*, `PAYPAL_WEBHOOK_ID`*, `PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com`, `APP_BASE_URL` (the Vercel URL), `ANTHROPIC_API_KEY`*, `NVIDIA_API_KEY`*, `NODEJS_HELPERS=0`; optional `STUDIO_AI_MODEL`, `STUDIO_AI_TIMING=1`. * = mark as Secret.
+
 ## Next task
 
-Live probe and Ask AI timing on Claude once the key works (~Nov 2); pick model and effort. Check tool-call validity per model for the strict-tools decision above.
+1. Eddie runs `20261031180000_seat_proposals.sql` in the hackathon Supabase SQL editor.
+2. Vercel setup (Eddie, dashboard): Hobby sign-up with GitHub; import the repo; Framework Preset Other; Node.js 22.x; Production Branch `ccr-1d301b90-3tuzmz`; env vars above; deploy; set `APP_BASE_URL` to the URL and redeploy; PayPal sandbox webhook at `<url>/api/paypal/webhook` (Payment capture completed) -> `PAYPAL_WEBHOOK_ID` -> redeploy; Supabase Auth Site URL = the Vercel URL; smoke test.
+3. Live probe and Ask AI timing on Claude once the key works (~Nov 2); pick model and effort; check tool-call validity for the strict-tools decision.
 
 ## Remaining after that (in order, one at a time)
 

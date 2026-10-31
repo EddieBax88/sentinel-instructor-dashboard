@@ -175,3 +175,73 @@ export async function logAgentAction({ userId, action, details = {} }) {
     console.warn(`Agent action "${action}" was not logged: ${error.message}`);
   }
 }
+
+// Seat proposals (see supabase/migrations/20261031180000_seat_proposals.sql). Server-only table.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const proposalFromRow = (row) => ({
+  id: row.id,
+  userId: row.user_id,
+  quantity: row.quantity,
+  className: row.class_name,
+  expiresAt: Date.parse(row.expires_at),
+});
+
+export async function saveSeatProposal({ id, userId, quantity, className, unitPrice, total, currency, expiresAt }) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/seat_proposals`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=minimal' }),
+    body: JSON.stringify({
+      id,
+      user_id: userId,
+      quantity,
+      class_name: className,
+      unit_price: unitPrice,
+      total,
+      currency,
+      expires_at: new Date(expiresAt).toISOString(),
+    }),
+  });
+  if (!response.ok) {
+    await readJson(response);
+    throw Object.assign(new Error(`Could not save the seat proposal in Supabase (${response.status}).`), { statusCode: 502 });
+  }
+}
+
+// Takes the proposal if it belongs to userId and has not expired at `now`: one DELETE, so two
+// confirms of the same proposal cannot both get it. Returns null when nothing matched.
+export async function claimSeatProposal({ proposalId, userId, now }) {
+  if (!UUID.test(String(proposalId))) return null;
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({
+    id: `eq.${proposalId}`,
+    user_id: `eq.${userId}`,
+    expires_at: `gt.${new Date(now).toISOString()}`,
+    select: 'id,user_id,quantity,class_name,expires_at',
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/seat_proposals?${query}`, {
+    method: 'DELETE',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=representation', Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read the seat proposal from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  return rows[0] ? proposalFromRow(rows[0]) : null;
+}
+
+// Reads a proposal by ID regardless of owner, to tell "another account's proposal" from "gone".
+export async function getSeatProposal(proposalId) {
+  if (!UUID.test(String(proposalId))) return null;
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({ id: `eq.${proposalId}`, select: 'id,user_id,quantity,class_name,expires_at', limit: '1' });
+  const response = await fetch(`${baseUrl}/rest/v1/seat_proposals?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read the seat proposal from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  return rows[0] ? proposalFromRow(rows[0]) : null;
+}
