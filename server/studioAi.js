@@ -23,9 +23,10 @@ const SCOPE_NOTE = 'You are the analytics assistant in an instructor dashboard. 
 const MAX_MESSAGES = 200;
 const MAX_TOOLS = 30;
 const MAX_OUTPUT_TOKENS = 16384;
-// NVIDIA's free endpoint sometimes stalls a turn for 40-60 s that normally takes 2-6 s. A turn
-// still running at this point is aborted and sent once more; the second try runs to completion.
-export const TURN_RETRY_AFTER_MS = 15_000;
+// NVIDIA's free endpoint sometimes queues a turn for a long time before it starts. Turns are
+// streamed; one with no chunk at all by this point is aborted and sent once more, and the second
+// try runs to completion. Once chunks are flowing a turn is never aborted.
+export const FIRST_CHUNK_TIMEOUT_MS = 10_000;
 const ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 const fail = (status, message) => Object.assign(new Error(message), { statusCode: status });
@@ -108,31 +109,119 @@ export function describeTurn(nvidiaRequest, completion, latencyMs) {
     thinkingEstimated: typeof reported !== 'number',
     tools: (message.tool_calls ?? []).map((call) => call?.function?.name).filter(Boolean),
     finishReason: choice.finish_reason ?? null,
+    toolResults: latestToolResults(nvidiaRequest.messages),
   };
 }
 
-// One model turn with a single retry after a stall. Errors other than our own abort are thrown as
-// before; the retry has no deadline, so a slow endpoint never fails the question.
-export async function completeTurn(client, nvidiaRequest, { retryAfterMs = TURN_RETRY_AFTER_MS } = {}) {
-  const firstStarted = Date.now();
+const RESULT_PREVIEW_CHARS = 400;
+
+// The results of the latest tool round this turn was sent with (after the last assistant message;
+// on an agent's first turn, its last preloaded call): which tool, whether it succeeded, and its
+// errors and health issues, so a repeated call can be traced to what the model was told.
+export function latestToolResults(messages) {
+  const lastAssistant = messages.findLastIndex((message) => message.role === 'assistant');
+  const names = new Map(messages.flatMap((message) => message.tool_calls ?? []).map((call) => [call.id, call.function?.name]));
+  return messages.slice(lastAssistant + 1).filter((message) => message.role === 'tool').map((message) => {
+    const text = typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    const issues = (parsed?.issues ?? parsed?.data?.issues ?? []).map((issue) => issue.message ?? `${issue.code}: ${issue.description} (score ${issue.score})`);
+    return {
+      tool: names.get(message.tool_call_id) ?? 'unknown',
+      success: typeof parsed?.success === 'boolean' ? parsed.success : null,
+      ...(issues.length && { issues: issues.map((issue) => String(issue).slice(0, 200)) }),
+      preview: text.slice(0, RESULT_PREVIEW_CHARS),
+    };
+  });
+}
+
+// Streamed chunks -> the non-streamed completion shape the rest of the proxy reads.
+async function collectStream(stream, onFirstChunk) {
+  const message = { role: 'assistant', content: '', reasoning_content: '' };
+  const toolCalls = [];
+  let first = true;
+  let id;
+  let model;
+  let finishReason = null;
+  let usage;
+  for await (const chunk of stream) {
+    if (first) {
+      first = false;
+      onFirstChunk();
+    }
+    id ??= chunk.id;
+    model ??= chunk.model;
+    if (chunk.usage) usage = chunk.usage;
+    for (const choice of chunk.choices ?? []) {
+      const delta = choice.delta ?? {};
+      if (typeof delta.content === 'string') message.content += delta.content;
+      const reasoning = delta.reasoning_content ?? delta.reasoning;
+      if (typeof reasoning === 'string') message.reasoning_content += reasoning;
+      for (const part of delta.tool_calls ?? []) {
+        const call = (toolCalls[part.index ?? toolCalls.length] ??= { id: undefined, type: 'function', function: { name: '', arguments: '' } });
+        if (part.id) call.id = part.id;
+        if (part.type) call.type = part.type;
+        if (part.function?.name) call.function.name += part.function.name;
+        if (part.function?.arguments) call.function.arguments += part.function.arguments;
+      }
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+    }
+  }
+  const calls = toolCalls.filter(Boolean);
+  return {
+    id,
+    model,
+    choices: [{ index: 0, message: { ...message, ...(calls.length && { tool_calls: calls }) }, finish_reason: finishReason }],
+    ...(usage && { usage }),
+  };
+}
+
+// One streamed attempt. With a deadline, it is aborted if no chunk has arrived by then.
+async function streamTurn(client, nvidiaRequest, deadlineMs) {
+  const started = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), retryAfterMs);
+  const timer = deadlineMs === undefined ? null : setTimeout(() => controller.abort(), deadlineMs);
+  let ttftMs = null;
   try {
-    const completion = await client.chat.completions.create(nvidiaRequest, { signal: controller.signal });
-    return { completion, latencyMs: Date.now() - firstStarted, retried: false };
+    const stream = await client.chat.completions.create(
+      { ...nvidiaRequest, stream: true, stream_options: { include_usage: true } },
+      { signal: controller.signal },
+    );
+    const completion = await collectStream(stream, () => {
+      ttftMs = Date.now() - started;
+      clearTimeout(timer);
+    });
+    return { completion, ms: Date.now() - started, ttftMs, stalled: false };
   } catch (error) {
     if (!controller.signal.aborted) throw error;
+    return { ms: Date.now() - started, ttftMs: null, stalled: true };
   } finally {
     clearTimeout(timer);
   }
-  const firstAttemptMs = Date.now() - firstStarted;
-  const retryStarted = Date.now();
-  const completion = await client.chat.completions.create(nvidiaRequest);
-  const retryMs = Date.now() - retryStarted;
-  return { completion, latencyMs: firstAttemptMs + retryMs, retried: true, firstAttemptMs, retryMs };
 }
 
-export function createStudioAiRouter({ client = () => nvidiaClient('the analytics assistant'), retryAfterMs } = {}) {
+// One model turn, retried once if nothing at all arrives within the first-chunk timeout. Errors
+// other than that abort are thrown as before; the retry has no deadline, so a slow endpoint never
+// fails the question.
+export async function completeTurn(client, nvidiaRequest, { firstChunkTimeoutMs = FIRST_CHUNK_TIMEOUT_MS } = {}) {
+  const first = await streamTurn(client, nvidiaRequest, firstChunkTimeoutMs);
+  if (!first.stalled) return { completion: first.completion, latencyMs: first.ms, ttftMs: first.ttftMs, retried: false };
+  const retry = await streamTurn(client, nvidiaRequest);
+  return {
+    completion: retry.completion,
+    latencyMs: first.ms + retry.ms,
+    ttftMs: retry.ttftMs,
+    retried: true,
+    firstAttemptMs: first.ms,
+    retryMs: retry.ms,
+  };
+}
+
+export function createStudioAiRouter({ client = () => nvidiaClient('the analytics assistant'), firstChunkTimeoutMs } = {}) {
   const router = Router();
   // Studio's tool definitions and history are larger than the app-wide JSON limit.
   router.use(express.json({ limit: '2mb' }));
@@ -142,9 +231,9 @@ export function createStudioAiRouter({ client = () => nvidiaClient('the analytic
     try {
       await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
       const nvidiaRequest = buildNvidiaRequest(request.body);
-      const { completion, latencyMs, retried, firstAttemptMs, retryMs } = await completeTurn(client(), nvidiaRequest, { retryAfterMs });
+      const { completion, latencyMs, ttftMs, retried, firstAttemptMs, retryMs } = await completeTurn(client(), nvidiaRequest, { firstChunkTimeoutMs });
       if (process.env.STUDIO_AI_TIMING === '1') {
-        const row = { ...describeTurn(nvidiaRequest, completion, latencyMs), ...(retried && { retried, firstAttemptMs, retryMs }) };
+        const row = { ...describeTurn(nvidiaRequest, completion, latencyMs), ttftMs, ...(retried && { retried, firstAttemptMs, retryMs }) };
         console.log(`[studio-ai] ${JSON.stringify(row)}`);
       }
       response.set('Cache-Control', 'no-store');

@@ -75,8 +75,8 @@ try {
     const sentAt = performance.now();
     try {
       const nvidiaRequest = buildNvidiaRequest(route.request().postDataJSON());
-      const { completion, latencyMs, retried, firstAttemptMs } = await completeTurn(client, nvidiaRequest);
-      turns.push({ startS: (sentAt - questionStarted) / 1000, ...describeTurn(nvidiaRequest, completion, latencyMs), retried, firstAttemptMs });
+      const { completion, latencyMs, ttftMs, retried, firstAttemptMs } = await completeTurn(client, nvidiaRequest);
+      turns.push({ startS: (sentAt - questionStarted) / 1000, ...describeTurn(nvidiaRequest, completion, latencyMs), ttftMs, retried, firstAttemptMs });
       process.stdout.write('.');
       await route.fulfill({ json: sanitizeCompletion(completion) });
     } catch (error) {
@@ -121,11 +121,11 @@ try {
 }
 
 function report(totalS) {
-  const cols = [['#', 3], ['start s', 8], ['agent', 9], ['latency s', 10], ['thinking tok', 13], ['output tok', 11], ['input tok', 10], ['tool called', 40]];
+  const cols = [['#', 3], ['start s', 8], ['agent', 9], ['latency s', 10], ['ttft s', 7], ['thinking tok', 13], ['output tok', 11], ['input tok', 10], ['tool called', 40]];
   console.log(`\n\n${cols.map(([name, width]) => name.padEnd(width)).join('')}`);
   turns.forEach((turn, index) => {
     const cells = [
-      index + 1, turn.startS.toFixed(1), turn.agent, (turn.latencyMs / 1000).toFixed(1),
+      index + 1, turn.startS.toFixed(1), turn.agent, (turn.latencyMs / 1000).toFixed(1), turn.ttftMs == null ? '-' : (turn.ttftMs / 1000).toFixed(1),
       turn.error ? '-' : `${turn.thinkingEstimated ? '~' : ''}${turn.thinkingTokens}`,
       turn.outputTokens ?? '-', turn.inputTokens ?? '-',
       (turn.error ? `ERROR ${turn.error}` : turn.tools.join(', ') || `(text, ${turn.finishReason})`)

@@ -46,6 +46,9 @@ test("instructions keep Studio's prompt and add the speed, no-recheck and short-
   for (const id of ['page', 'widget']) assert.match(tuned(id).instructions({}, {}), /Do not call view_page or view_widget after acting/);
   for (const id of ['data', 'page', 'widget', 'planning']) assert.match(tuned(id).instructions({}, {}), /complete_task summary is one short plain sentence/);
   assert.doesNotMatch(tuned('lead').instructions({}, {}), /complete_task summary/);
+  assert.match(tuned('widget').instructions({}, {}), /Do not re-call configure_widget because of health check results/);
+  assert.match(tuned('widget').instructions({}, {}), /Re-call configure_widget only when it returned success: false/);
+  for (const id of ['lead', 'data', 'page', 'planning']) assert.doesNotMatch(tuned(id).instructions({}, {}), /health check results/);
 });
 
 test('the harness config runs all five tuned agents on one adapter, starting from lead', () => {

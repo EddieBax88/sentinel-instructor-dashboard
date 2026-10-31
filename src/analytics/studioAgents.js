@@ -14,13 +14,19 @@ const LEAD_RULES = `- Do not call view_page before answering or to verify finish
 
 const NO_RECHECK_RULES = `- Do not call view_page or view_widget after acting to check your work; a tool reports an error when something fails. Call complete_task as soon as the change is made.`;
 
+// AG Studio 3.0's health check reports data_mapping_complete with score 0 straight after a correct
+// configure_widget (the widget renders fine), and the widget prompt says to re-call on health
+// issues, so the model spends a long second turn "fixing" a correct widget. Only real rejections
+// (success: false) warrant another call.
+const WIDGET_HEALTH_RULES = `- When configure_widget returns success: true, call complete_task next. Do not re-call configure_widget because of health check results: the data_mapping_complete check can report score 0 right after a correct configuration. Re-call configure_widget only when it returned success: false, and then fix exactly the issues it lists.`;
+
 const SUMMARY_RULES = `- Your complete_task summary is one short plain sentence: what you changed or found, plus the widget id of any widget you created. No scores, health details or analysis.`;
 
 const EXTRA_RULES = {
   lead: [SPEED_RULES, LEAD_RULES],
   data: [SPEED_RULES, SUMMARY_RULES],
   page: [SPEED_RULES, NO_RECHECK_RULES, SUMMARY_RULES],
-  widget: [SPEED_RULES, NO_RECHECK_RULES, SUMMARY_RULES],
+  widget: [SPEED_RULES, NO_RECHECK_RULES, WIDGET_HEALTH_RULES, SUMMARY_RULES],
   planning: [SPEED_RULES, SUMMARY_RULES],
 };
 
