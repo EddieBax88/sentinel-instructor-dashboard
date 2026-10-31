@@ -59,19 +59,40 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 Built per the approved plan in `server/studioAi.js` (`buildAnthropicRequest`, `toStudioReply`, `completeAnthropicTurn`, `describeAnthropicTurn`), `server/anthropic.js`, `server/config.js` and `scripts/probe-studio-agent.mjs`. The browser adapter and its request/response shape are unchanged. The NVIDIA proxy functions stay for the probe's baseline.
 
-One plan item not built: strict tools. `npm run check:strict-tools` checks AG Studio's captured schemas against Anthropic's strict rules (structured-outputs docs, read 2026-10-31). Every object already has `additionalProperties: false`, but:
+### Decision: strict tools off (Eddie, 2026-10-31)
 
-- Rule failures: `execute_query` (recursive `$defs`, `not: {}`, `minItems`/`maxItems` 2), `create_expression` (recursive), `create_plan` (recursive layout `$defs`), `add_widget_filter` and `add_page_filter` (`minItems`/`maxItems` 2), `configure_widget` (`minimum`, `exclusiveMinimum`).
-- Per-request limits (24 optional params, 16 union params): data agent 42/36, widget agent 186/31, page agent 24/20. Only the lead agent passes everything.
-- `update_expression` and `delete_expression` are on the allowlist but not in the captured fixtures, so they are unchecked.
+Tools are sent without `strict: true`. The live probe (Nov 2) measures tool-call validity per model; revisit strict only if it shows malformed calls.
 
-Tools are sent without `strict: true` until Eddie decides how to handle this.
+Why: the schema audit below. `npm run check:strict-tools` checks AG Studio's captured schemas against Anthropic's strict rules (structured-outputs docs, read 2026-10-31). Every object already has `additionalProperties: false`.
+
+Rule failures (6 of 21 captured tools):
+
+| Tool | Problem |
+|---|---|
+| `execute_query` | Recursive `$defs`, `not: {}`, `minItems`/`maxItems` 2 |
+| `create_expression` | Recursive `$defs` |
+| `create_plan` | Recursive layout `$defs` |
+| `add_widget_filter` | `minItems`/`maxItems` 2 |
+| `add_page_filter` | `minItems`/`maxItems` 2 |
+| `configure_widget` | `minimum`, `exclusiveMinimum` |
+
+Per-request limits (24 optional params, 16 union params, 20 strict tools):
+
+| Agent | Tools | Optional params | Union params | Result |
+|---|---|---|---|---|
+| lead | 8 | 5 | 1 | Pass |
+| data | 4 | 42 | 36 | Over both limits; 2 tools fail rules |
+| widget | 7 | 186 | 31 | Over both limits; 2 tools fail rules |
+| page | 9 | 24 (at limit) | 20 | Over union limit; 1 tool fails rules |
+| planning | 6 | 9 | 7 | Within limits; 1 tool fails rules |
+
+`update_expression` and `delete_expression` are on the allowlist but not in the captured fixtures, so they are unchecked.
 
 `npm run time:ask-ai` still times the NVIDIA path; it was not part of the plan.
 
 ## Next task
 
-Eddie decides on strict tools (see above). Then the live probe and Ask AI timing on Claude once the key works; pick model and effort.
+Live probe and Ask AI timing on Claude once the key works (~Nov 2); pick model and effort. Check tool-call validity per model for the strict-tools decision above.
 
 ## Remaining after that (in order, one at a time)
 
