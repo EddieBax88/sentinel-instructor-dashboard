@@ -5,7 +5,7 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 ## Repo state (Nov 1, 2026, end of the unattended session)
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push.
-- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. PR #2 (draft, `ccr-90064225-vddchi` into this branch) is now redundant: its one commit (31d7e60) was fast-forwarded onto this branch; it can be closed.
+- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. PR #2 (`ccr-90064225-vddchi` into this branch) shows as merged: its one commit (31d7e60) was fast-forwarded onto this branch, and GitHub marked the PR merged when it landed (Nov 1, 20:39 UTC). Nothing to do; the `ccr-90064225-vddchi` branch can be deleted.
 - Commits this session, oldest first (each pushed, deployed READY on Vercel, and `GET /api/health` answered `{"status":"ok"}` after the deploy):
   - `31d7e60` HANDOFF: hosted demo, live webhook, applied migrations, Seat agent recorded.
   - `f4d2ae6` Brand theme (Inter + Fraunces, oklch tokens), Class fill widget, sidebar link to www.sentinellearning.com.
@@ -28,7 +28,7 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 4. **cloudflared.deb in history.** It is out of the tree but still in git history: the commit that added it (`4a52b8a`) is on `main`, which PR #1 targets, so rewriting it means rewriting `main`. The earlier plan item "scrub git history right before submission, keeping commit dates" would cover it; that rewrite needs you.
 5. **Logo.** No logo asset exists in the repo, so the sidebar keeps the GraduationCap mark with "sentinel." in Fraunces. Supply a logo file if you want the real mark.
 6. **AA contrast choice.** White text on the raw brand primary `oklch(58% .19 50)` is 4.45:1, just under WCAG AA for normal text, so buttons and small primary text use a darker step `--primary-strong oklch(50% .17 50)` (6.2:1). The raw primary is used for large text, bars, icons and chart 1. Override in `src/styles.css` if you want the raw primary on buttons regardless.
-7. **Close PR #2** (redundant, see above).
+7. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is already merged, see above).
 8. **Anthropic key (~Nov 2):** live probe and Ask AI timing on Claude (`npm run probe:studio-agent`, then pick model and effort in `server/config.js`); check the live lead-to-Seat-agent handoff; revisit strict tools if the probe shows malformed calls.
 9. **AG Studio trial license (~Nov 5):** key via env, served to the browser like the Supabase publishable key, to remove the watermark.
 
@@ -67,7 +67,7 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 - Running `npm run test:browser` while another Vite dev server is up on the same machine fails with "WebSocket closed without opened" (Vite's HMR port 24678 is taken). Run it alone.
 - The error notice (`.notice[role="alert"]`) is now red on the muted grey, where the old theme showed every notice in green. Deliberate, for AA, but it reads louder than before.
 - `listPaypalOrdersForUser` and `getPaypalOrder` deliberately do not select the new `refund_id` and `refunded_at` columns, so the live ledger keeps working before the migration is applied. Once it is applied, selecting them is safe.
-- PR #2 and the `ccr-90064225-vddchi` branch are leftovers from the retired session.
+- The `ccr-90064225-vddchi` branch is a leftover from the retired session (its PR #2 is merged).
 
 ## Refund design (server/webhook.js, 08e06b2)
 
