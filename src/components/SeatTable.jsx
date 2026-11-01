@@ -37,6 +37,7 @@ const quotaColumns = [
   { field: 'classSize', headerName: 'CLASS SIZE' },
   { field: 'seatsSold', headerName: 'UNLOCKED' },
   { field: 'seatsReserved', headerName: 'PENDING' },
+  { field: 'seatsRefunded', headerName: 'REFUNDED' },
   { field: 'seatsRemaining', headerName: 'REMAINING' },
 ];
 const studentColumns = [

@@ -31,7 +31,11 @@ Supabase ledger (paypal_orders, paypal_payments, user_entitlements)
    ▼
 Verified webhooks (server/webhook.js): PAYMENT.CAPTURE.COMPLETED is verified with
    PayPal's postback check on the raw body, then granted through the same function
-   (a duplicate is a no-op) and recorded in paypal_webhook_events
+   (a duplicate is a no-op) and recorded in paypal_webhook_events.
+   PAYMENT.CAPTURE.REFUNDED: the capture is resolved from the refund's "up" link;
+   a full refund calls revoke_seat_access() (order and payment REFUNDED, seat
+   access deactivated when no completed order remains); a partial refund is
+   recorded only
    │
    ▼
 Live PayPal events drawer (EventDrawer.jsx) + Instructor analytics (AG Studio):
@@ -42,7 +46,7 @@ Live PayPal events drawer (EventDrawer.jsx) + Instructor analytics (AG Studio):
 
 - **Two AI surfaces, one money path.** The seat assistant on Overview and the Seat agent inside AG Studio's Ask AI both end at the same server-priced proposal and the same Confirm endpoint. No model can create an order or move money.
 - **Server-side truth.** Price (USD 49.00 per seat), quantity limits (1 to 200 per order), the signed-in user (from the verified Supabase token, never from the request), and the sandbox host are all fixed on the server.
-- **Idempotent grants.** Capture from the browser and the webhook race safely: the Postgres function records a capture once and returns early on a repeat.
+- **Idempotent grants and revokes.** Capture from the browser and the webhook race safely: the Postgres function records a capture once and returns early on a repeat. A full refund revokes once; a retried refund event answers "already revoked".
 
 ## Run locally
 
@@ -87,6 +91,7 @@ Apply the files in `supabase/migrations` in order, in the Supabase SQL editor or
 3. `20261028200000_rename_seat_grant.sql`: renames the grant function to `grant_seat_access` and the entitlement product code to `instructor_seat`, converting existing rows. If you re-run file 2 later, run file 3 again after it.
 4. `20261031180000_seat_proposals.sql`: the `seat_proposals` table, where a proposal waits up to 10 minutes for Confirm. Server-only (RLS on, no policies).
 5. `20261101200000_paypal_webhook_events.sql`: the `paypal_webhook_events` table behind the PayPal events drawer. One row per verified event, keyed by PayPal's event ID; no payer details. Server-only.
+6. `20261102000000_refunds_and_seat_revoke.sql`: the `REFUNDED` status on `paypal_orders` and `paypal_payments`, `refund_id` and `refunded_at` on payments, and `revoke_seat_access`, which locks the order, checks the refund equals the captured amount, marks both rows `REFUNDED`, and deactivates the seat entitlement only when the instructor has no other completed order. Until it is applied, a refund webhook answers 5xx (PayPal retries) and nothing changes. The PayPal webhook subscription must also include `PAYMENT.CAPTURE.REFUNDED`.
 
 ## Tests
 
@@ -117,6 +122,8 @@ npm run check:strict-tools   # offline check of AG Studio's tool schemas against
 **Ask AI (AG Studio Agent Framework).** On Instructor analytics, Ask AI opens Studio's assistant beside the report. Turns go through `POST /api/studio-ai/chat` (`server/studioAi.js`), which requires the signed-in token, translates Chat Completions-shaped turns to the Anthropic Messages API and back, streams with a first-content retry, drops thinking, and accepts only Studio's own tools (read schema and data, edit widgets, filters, pages, plans). It cannot create orders. `src/analytics/studioAgents.js` preloads the report, schema and page into each built-in agent and keeps replies to one sentence. Tools are sent without `strict: true` (see `npm run check:strict-tools`).
 
 **Seat agent (custom Studio agent).** `src/analytics/seatAgent.js` registers a `seat` agent beside Studio's lead, data, widget, page and planning agents. The lead delegates seat requests to it; it runs code, not a model loop: it posts the instruction to `POST /api/agent/chat`, shows the reply, hands any proposal to the Confirm bar above the report, and reports back with `complete_task`. Confirm uses the same endpoint as the Overview assistant.
+
+**Refunds.** A refund issued in the PayPal Sandbox (Dashboard or `POST /v2/payments/captures/{id}/refund`) arrives as `PAYMENT.CAPTURE.REFUNDED`. The handler verifies it, finds the seat order through the refund's capture, and revokes the seats only for a completed refund of the full captured amount in the captured currency. The ledger shows the order as `REFUNDED` with the student marked "Seat revoked", the class seats grid counts it under Refunded, and analytics shows it as Refunded with no revenue. Partial refunds, refunds of captures this app never recorded, and refunds still pending are recorded in the events drawer and change nothing.
 
 **Instructor analytics.** `GET /api/analytics/orders` returns the signed-in instructor's orders with seats and money split by status. The report (`src/analytics/initialReport.js`) shows Revenue, Seats unlocked vs pending, Awaiting payment, Orders, seats and order value by day, Class fill (unlocked seats against the planned class size per class) and Orders by class. The theme (`src/analytics/theme.js`) uses the Sentinel Learning brand tokens from `src/styles.css`. AG Studio 3.0.0 pins AG Grid 36.2; no licence key is configured, so Studio shows a watermark.
 

@@ -100,12 +100,12 @@ test("returns only the signed-in instructor's orders, shaped for AG Studio", asy
   assert.deepEqual(body.orders.map((order) => order.orderId), ['ORDER-30', 'ORDER-2']);
   assert.deepEqual(body.orders[0], {
     orderId: 'ORDER-30', className: 'Fall class', status: 'Pending', currency: 'USD',
-    seats: 30, seatsUnlocked: 0, seatsPending: 30, amount: 1470, revenue: 0, pendingAmount: 1470,
+    seats: 30, seatsUnlocked: 0, seatsPending: 30, seatsRefunded: 0, amount: 1470, revenue: 0, pendingAmount: 1470, refundedAmount: 0,
     orderDate: '2026-10-28', capturedDate: null,
   });
   assert.deepEqual(body.orders[1], {
     orderId: 'ORDER-2', className: 'Spring class', status: 'Unlocked', currency: 'USD',
-    seats: 2, seatsUnlocked: 2, seatsPending: 0, amount: 98, revenue: 98, pendingAmount: 0,
+    seats: 2, seatsUnlocked: 2, seatsPending: 0, seatsRefunded: 0, amount: 98, revenue: 98, pendingAmount: 0, refundedAmount: 0,
     orderDate: '2026-10-27', capturedDate: '2026-10-27',
   });
 });
@@ -124,6 +124,18 @@ test('reports a Supabase read failure as 502 without returning data', async () =
   const { status, body } = await getAnalytics({ token: 'token-a' });
   assert.equal(status, 502);
   assert.equal(body.orders, undefined);
+});
+
+test('a refunded order is Refunded: no revenue, no pending, its seats and amount counted as refunded', () => {
+  const { orders } = analyticsFromOrders([{
+    paypal_order_id: 'ORDER-R', student_name: 'Fall class', quantity: 3, amount: 147, currency: 'USD',
+    status: 'REFUNDED', created_at: '2026-10-28T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-R', created_at: '2026-10-28T18:05:00Z' }],
+  }]);
+  assert.deepEqual(orders[0], {
+    orderId: 'ORDER-R', className: 'Fall class', status: 'Refunded', currency: 'USD',
+    seats: 3, seatsUnlocked: 0, seatsPending: 0, seatsRefunded: 3, amount: 147, revenue: 0, pendingAmount: 0, refundedAmount: 147,
+    orderDate: '2026-10-28', capturedDate: '2026-10-28',
+  });
 });
 
 test('an instructor with no orders gets an empty list and the default class size', () => {

@@ -14,9 +14,11 @@ const ORDER_FIELDS = [
   ['seats', 'Seats per Order', 'integerFormat', true],
   ['seatsUnlocked', 'Unlocked per Order', 'integerFormat', true],
   ['seatsPending', 'Pending per Order', 'integerFormat', true],
+  ['seatsRefunded', 'Refunded per Order', 'integerFormat', true],
   ['amount', 'Order Amount', 'currencyFormat', true],
   ['revenue', 'Captured Amount', 'currencyFormat', true],
   ['pendingAmount', 'Unpaid Amount', 'currencyFormat', true],
+  ['refundedAmount', 'Refunded Amount', 'currencyFormat', true],
   ['orderDate', 'Order Date', 'dateFormat'],
   ['capturedDate', 'Paid Date', 'dateFormat'],
 ];
@@ -29,6 +31,8 @@ const MEASURES = [
   ['orderTotal', 'Order Total', 'currencyFormat', 'orders.amount', 'sum'],
   ['revenue', 'Revenue', 'currencyFormat', 'orders.revenue', 'sum'],
   ['awaitingPayment', 'Awaiting Payment', 'currencyFormat', 'orders.pendingAmount', 'sum'],
+  ['seatsRefunded', 'Seats Refunded', 'integerFormat', 'orders.seatsRefunded', 'sum'],
+  ['refunded', 'Refunded', 'currencyFormat', 'orders.refundedAmount', 'sum'],
   ['orderCount', 'Orders', 'integerFormat', 'orders.orderId', 'countd'],
 ];
 
@@ -39,12 +43,13 @@ export function buildStudioData(orders) {
   return {
     description:
       "One instructor's seat orders from PayPal Sandbox, in USD. Each seat costs USD 49.00. " +
-      'Revenue counts only captured (unlocked) orders; Awaiting Payment is approved-but-unpaid or pending orders.',
+      'Revenue counts only captured (unlocked) orders; Awaiting Payment is approved-but-unpaid or pending orders; ' +
+      'Refunded is orders whose capture PayPal fully refunded, which revoked their seats.',
     sources: [
       {
         id: 'orders',
         name: 'Seat Orders',
-        description: 'One row per seat order. Class is the class name the instructor gave the order.',
+        description: 'One row per seat order. Class is the class name the instructor gave the order. Seat Status is Unlocked, Pending or Refunded.',
         data: orders,
         fields: ORDER_FIELDS.map(([id, name, format, hide]) => ({
           id,

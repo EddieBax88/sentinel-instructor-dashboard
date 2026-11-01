@@ -139,8 +139,36 @@ export async function listPaypalOrdersForUser(userId) {
   return rows;
 }
 
+// The seat order behind a PayPal capture ID, with the recorded payment, for refund webhooks
+// (the refund names its capture, not the order). Returns null when no stored capture matches.
+export async function getPaypalOrderByCaptureId(captureId) {
+  if (typeof captureId !== 'string' || !captureId) return null;
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({
+    select: 'capture_id,amount,currency,status,paypal_orders(paypal_order_id,user_id,student_name,quantity,amount,currency,status)',
+    capture_id: `eq.${captureId}`,
+    limit: '1',
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_payments?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read the PayPal capture from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  const row = rows[0];
+  if (!row?.paypal_orders) return null;
+  return {
+    payment: { captureId: row.capture_id, amount: row.amount, currency: row.currency, status: row.status },
+    order: row.paypal_orders,
+  };
+}
+
 // Supabase function that records a verified capture and grants the seats (see supabase/migrations).
 export const SEAT_GRANT_FUNCTION = 'grant_seat_access';
+// Its counterpart for a full refund: marks the payment and order REFUNDED and deactivates the seat
+// entitlement when no completed order remains. Returns 'revoked' or 'already_revoked'.
+export const SEAT_REVOKE_FUNCTION = 'revoke_seat_access';
 
 export async function grantSeatAccess({ userId, orderId, captureId, status, amount, currency }) {
   const { baseUrl, serviceRoleKey } = supabaseConfiguration();
@@ -160,6 +188,27 @@ export async function grantSeatAccess({ userId, orderId, captureId, status, amou
     await readJson(response);
     throw Object.assign(new Error(`Supabase could not grant seat access (${response.status}).`), { statusCode: 502 });
   }
+}
+
+export async function revokeSeatAccess({ userId, orderId, captureId, refundId, amount, currency }) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/rpc/${SEAT_REVOKE_FUNCTION}`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+    body: JSON.stringify({
+      p_user_id: userId,
+      p_order_id: orderId,
+      p_capture_id: captureId,
+      p_refund_id: refundId,
+      p_amount: amount,
+      p_currency: currency,
+    }),
+  });
+  const result = await readJson(response);
+  if (!response.ok) {
+    throw Object.assign(new Error(`Supabase could not revoke seat access (${response.status}).`), { statusCode: 502 });
+  }
+  return result === 'already_revoked' ? 'already_revoked' : 'revoked';
 }
 
 export async function logAgentAction({ userId, action, details = {} }) {

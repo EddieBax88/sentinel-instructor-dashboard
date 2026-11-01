@@ -5,28 +5,35 @@ import { authenticateSupabaseUser, getBearerToken, listPaypalOrdersForUser } fro
 const money = (value) => Math.round(Number(value) * 100) / 100;
 const dateOnly = (timestamp) => (typeof timestamp === 'string' && timestamp ? timestamp.slice(0, 10) : null);
 
+const STATUS_LABELS = { COMPLETED: 'Unlocked', REFUNDED: 'Refunded' };
+
 // One row per seat order, shaped for AG Studio: plain numbers and ISO dates, with seats and money
-// already split by status so widgets can simply sum them. Rows must already be limited to one
-// instructor (listPaypalOrdersForUser does that on the server).
+// already split by status (Unlocked, Pending, Refunded) so widgets can simply sum them. Rows must
+// already be limited to one instructor (listPaypalOrdersForUser does that on the server).
 export function analyticsFromOrders(rows) {
   const orders = rows.map((row) => {
     const payment = Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments;
-    const unlocked = row.status === 'COMPLETED';
+    const status = STATUS_LABELS[row.status] ?? 'Pending';
+    const unlocked = status === 'Unlocked';
+    const refunded = status === 'Refunded';
+    const pending = !unlocked && !refunded;
     const seats = Number(row.quantity ?? 1);
     const amount = money(row.amount);
     return {
       orderId: row.paypal_order_id,
       className: row.student_name,
-      status: unlocked ? 'Unlocked' : 'Pending',
+      status,
       currency: row.currency,
       seats,
       seatsUnlocked: unlocked ? seats : 0,
-      seatsPending: unlocked ? 0 : seats,
+      seatsPending: pending ? seats : 0,
+      seatsRefunded: refunded ? seats : 0,
       amount,
       revenue: unlocked ? amount : 0,
-      pendingAmount: unlocked ? 0 : amount,
+      pendingAmount: pending ? amount : 0,
+      refundedAmount: refunded ? amount : 0,
       orderDate: dateOnly(row.created_at),
-      capturedDate: unlocked ? dateOnly(payment?.created_at) : null,
+      capturedDate: unlocked || refunded ? dateOnly(payment?.created_at) : null,
     };
   });
   return { classSize: DEFAULT_CLASS_SIZE, orders };

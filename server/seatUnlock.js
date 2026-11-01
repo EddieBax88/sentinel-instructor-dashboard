@@ -10,11 +10,21 @@ export function money(value) {
   return Number(value).toFixed(2);
 }
 
+// Ledger status for a stored order: COMPLETED (seats unlocked), REFUNDED (a full PayPal refund
+// revoked the seats), or AWAITING PAYMENT (created, maybe approved, not captured).
+export function ledgerStatus(storedStatus) {
+  if (storedStatus === 'COMPLETED') return 'COMPLETED';
+  if (storedStatus === 'REFUNDED') return 'REFUNDED';
+  return 'AWAITING PAYMENT';
+}
+
+const READINESS = { COMPLETED: 'Seat unlocked', REFUNDED: 'Seat revoked', 'AWAITING PAYMENT': 'Payment pending' };
+
 // Builds the ledger from Supabase paypal_orders rows (already limited to one instructor).
 export function dashboardFromOrders(rows) {
   const orders = rows.map((row) => {
     const payment = Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments;
-    const completed = row.status === 'COMPLETED';
+    const status = ledgerStatus(row.status);
     return {
       orderId: row.paypal_order_id,
       studentName: row.student_name,
@@ -23,14 +33,15 @@ export function dashboardFromOrders(rows) {
       amount: money(row.amount),
       currency: row.currency,
       captureId: payment?.capture_id ?? '',
-      status: completed ? 'COMPLETED' : 'AWAITING PAYMENT',
+      status,
       createdAt: row.created_at,
-      unlockedAt: payment?.created_at,
+      unlockedAt: status === 'COMPLETED' ? payment?.created_at : undefined,
     };
   });
   const seats = (status) => orders.filter((order) => order.status === status).reduce((sum, order) => sum + order.quantity, 0);
   const seatsSold = seats('COMPLETED');
   const seatsReserved = seats('AWAITING PAYMENT');
+  const seatsRefunded = seats('REFUNDED');
 
   return {
     transactions: orders,
@@ -40,13 +51,14 @@ export function dashboardFromOrders(rows) {
       classSize: COHORT.classSize,
       seatsSold,
       seatsReserved,
+      seatsRefunded,
       seatsRemaining: Math.max(0, COHORT.classSize - seatsSold - seatsReserved),
     }],
     students: orders.map((order) => ({
       id: order.captureId || order.orderId,
       name: order.studentName,
       cohort: COHORT.name,
-      readiness: order.status === 'COMPLETED' ? 'Seat unlocked' : 'Payment pending',
+      readiness: READINESS[order.status],
     })),
   };
 }
