@@ -1,12 +1,13 @@
 // The default Instructor analytics report, as AG Studio report state. Field ids ('orders.revenue')
-// refer to ./studioData.js; 'revenueTile' and 'seatProgress' are the custom widgets in ./widgets.jsx.
+// refer to ./studioData.js; 'revenueTile', 'seatProgress' and 'classFill' are the custom widgets in
+// ./widgets.jsx.
 
 const at = (xTrack, yTrack, xSpan, ySpan) => ({ xTrack, yTrack, xSpan, ySpan });
 // Named measures from ./studioData.js.
 const measure = (id) => ({ id });
 const title = (text) => ({ title: { enabled: true, text } });
 
-const FONT = '"DM Sans", sans-serif';
+const FONT = '"Inter", system-ui, sans-serif';
 const typography = (fontSize, fontWeight = 'normal') => ({ fontFamily: FONT, fontSize, fontWeight, fontStyle: 'normal' });
 
 const kpi = (text, value) => ({
@@ -57,6 +58,11 @@ const overview = {
         style: { theme: { common: { legend: { enabled: true } } } },
       },
     },
+    'class-fill': {
+      type: 'classFill',
+      dataMapping: { className: [{ id: 'orders.className' }], unlocked: [measure('seatsUnlocked')] },
+      format: title('Class fill'),
+    },
     'by-class': {
       type: 'grid',
       dataMapping: {
@@ -80,7 +86,8 @@ const overview = {
     'kpi-orders': at(21, 0, 3, 9),
     'seats-over-time': at(0, 9, 12, 20),
     'revenue-over-time': at(12, 9, 12, 20),
-    'by-class': at(0, 29, 24, 18),
+    'class-fill': at(0, 29, 9, 18),
+    'by-class': at(9, 29, 15, 18),
   },
 };
 

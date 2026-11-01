@@ -1,13 +1,16 @@
 // Custom AG Studio widgets for Instructor analytics, styled with the dashboard's CSS tokens:
 // - revenueTile: a large money value with an optional supporting number underneath.
 // - seatProgress: unlocked and pending seats as a bar against the default class size.
+// - classFill: one bar per class, seats unlocked against the class size.
 // Studio passes new params on every refresh (data, filters, mapping), so each widget re-queries
 // whenever its props change.
 
 import { createWidgets } from 'ag-studio-react';
 import { useEffect, useState } from 'react';
+import { classFillRows } from './classFill.js';
 
-const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#176b50" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg>`;
+const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg>`;
+const BARS_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h13"/></svg>`;
 
 // Fetches one row of aggregated values for the mapped fields and keeps Studio's overlay in sync.
 function useMappedValues(props, keys, requiredKeys = keys) {
@@ -84,6 +87,63 @@ function SeatProgress(props) {
   );
 }
 
+// Fetches grouped rows for one category field and one measure (Studio groups by the unaggregated
+// field), and keeps Studio's overlay in sync.
+function useGroupedRows(props, categoryKey, valueKey) {
+  const { dataMapping, widgetApi } = props;
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    const category = dataMapping[categoryKey]?.[0];
+    const value = dataMapping[valueKey]?.[0];
+    if (!category || !value) {
+      widgetApi.setDisplayState('incompleteDataMapping');
+      return undefined;
+    }
+    const controller = new AbortController();
+    widgetApi.setDisplayState('loading', { prominent: result === null });
+    widgetApi.getData({ fields: [category, value] }, { signal: controller.signal })
+      .then(({ results }) => {
+        if (!results.rows.length) {
+          widgetApi.setDisplayState('noData');
+          return;
+        }
+        setResult({ rows: results.rows, categoryKey: category.key, valueKey: value.key });
+        widgetApi.setDisplayState('displayed');
+      })
+      .catch((error) => {
+        if (error?.name !== 'AbortError' && !controller.signal.aborted) widgetApi.setDisplayState('noData');
+      });
+    return () => controller.abort();
+    // Studio hands over a new props object on every refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props]);
+
+  return result;
+}
+
+function ClassFill(props) {
+  const result = useGroupedRows(props, 'className', 'unlocked');
+  if (!result) return null;
+  const classSize = props.context?.classSize ?? 0;
+  const rows = classFillRows(result.rows, { classKey: result.categoryKey, unlockedKey: result.valueKey, classSize });
+
+  return (
+    <div className="studio-class-fill">
+      {rows.map((row) => (
+        <div className="studio-class-fill-row" key={row.className}>
+          <span title={row.className}>{row.className}</span>
+          <strong>{row.unlocked}<small> / {row.classSize} seats</small></strong>
+          <div className="studio-class-fill-bar" role="img" aria-label={`${row.className}: ${row.unlocked} of ${row.classSize} seats unlocked`}>
+            <span className={row.full ? 'full' : ''} style={{ width: `${row.percent}%` }} />
+          </div>
+        </div>
+      ))}
+      <p className="studio-class-fill-note">Unlocked seats against the planned class size of {classSize}.</p>
+    </div>
+  );
+}
+
 const numericField = (aiDescription, required = true) => ({
   type: 'field',
   supportedRoles: ['numeric'],
@@ -132,10 +192,37 @@ const seatProgressDefinition = {
   ai: { description: 'Bar of unlocked and pending seats against the default class size.' },
 };
 
+const classFillDefinition = {
+  id: 'classFill',
+  label: 'Class Fill',
+  icon: BARS_ICON,
+  dataMapping: {
+    className: {
+      type: 'field',
+      supportedRoles: ['category'],
+      requires: { cardinality: 'one' },
+      required: true,
+      intent: 'category',
+      aiDescription: 'The class each bar is for, e.g. Class.',
+    },
+    unlocked: { ...numericField('Seats paid for and unlocked in that class, e.g. the sum of Seats Unlocked.'), intent: 'value' },
+  },
+  form: (params) => params.createDefaults({
+    dataMappingItems: [
+      { key: 'className', label: 'Class' },
+      { key: 'unlocked', label: 'Unlocked seats' },
+    ],
+  }),
+  comp: ClassFill,
+  defaultSize: { width: 360, height: 260 },
+  minSize: { width: 240, height: 160 },
+  ai: { description: 'One bar per class: seats unlocked against the planned class size, fullest first.' },
+};
+
 export const studioWidgets = (defaults) => createWidgets({
-  additionalTypes: [revenueTileDefinition, seatProgressDefinition],
+  additionalTypes: [revenueTileDefinition, seatProgressDefinition, classFillDefinition],
   menu: [
     ...defaults.menu,
-    { label: 'Instructor', widgetIds: ['revenueTile', 'seatProgress'] },
+    { label: 'Instructor', widgetIds: ['revenueTile', 'seatProgress', 'classFill'] },
   ],
 });

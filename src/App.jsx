@@ -145,6 +145,7 @@ export default function App() {
         <a className="rail-link" href="#seat-ledger">Seat ledger</a>
         <a className={`rail-link${view === 'analytics' ? ' active' : ''}`} href="#analytics">Instructor analytics</a>
         <div className="rail-bottom"><ShieldCheck size={16} /><span>Sandbox environment</span></div>
+        <a className="rail-footer" href="https://www.sentinellearning.com" target="_blank" rel="noopener noreferrer">A Sentinel Learning Inc. product</a>
       </aside>
 
       <main id="top" className="content">

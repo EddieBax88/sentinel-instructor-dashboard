@@ -4,14 +4,19 @@ import { AgGridReact } from 'ag-grid-react';
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
 // Theming API params (the grid ignores legacy --ag-* CSS variables when a theme object is set).
+// Colors point at the brand tokens in src/styles.css.
 const gridTheme = themeQuartz.withParams({
-  fontFamily: "'DM Sans', sans-serif",
+  fontFamily: 'var(--font)',
   fontSize: 10,
   headerFontSize: 9,
-  headerBackgroundColor: '#f8faf8',
-  headerTextColor: '#7c8880',
-  borderColor: '#edf1ed',
-  rowBorder: { color: '#edf1ed' },
+  headerBackgroundColor: 'var(--muted)',
+  headerTextColor: 'var(--muted-foreground)',
+  textColor: 'var(--foreground)',
+  backgroundColor: 'var(--card)',
+  borderColor: 'var(--border)',
+  rowBorder: { color: 'var(--border)' },
+  rowHoverColor: 'var(--accent)',
+  accentColor: 'var(--primary)',
   headerHeight: 32,
   rowHeight: 34,
   wrapperBorder: false,
