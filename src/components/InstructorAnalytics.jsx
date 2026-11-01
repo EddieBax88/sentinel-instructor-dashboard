@@ -1,8 +1,10 @@
 import { AgStudioAiModule, createAiHarness, directLlmRunner, enableStudioDevValidations } from 'ag-studio';
 import { AgStudio, AgStudioProvider } from 'ag-studio-react';
+import { Check, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nvidiaStudioAdapter } from '../analytics/nvidiaAdapter.js';
 import { initialReport } from '../analytics/initialReport.js';
+import { createSeatAgent } from '../analytics/seatAgent.js';
 import { studioHarnessConfig } from '../analytics/studioAgents.js';
 import { buildStudioData } from '../analytics/studioData.js';
 import { instructorStudioTheme } from '../analytics/theme.js';
@@ -57,26 +59,65 @@ async function readResponse(response) {
   return payload;
 }
 
+// A seat order the Seat agent prepared, waiting for the instructor. Confirm uses the same endpoint
+// as the Overview seat assistant (it creates the PayPal Sandbox order), then goes to PayPal.
+function SeatConfirmBar({ proposal, accessToken, onDismiss }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function confirm() {
+    setBusy(true);
+    setError('');
+    try {
+      const order = await readResponse(await fetch(`/api/agent/proposals/${encodeURIComponent(proposal.id)}/confirm`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }));
+      window.location.assign(order.approvalUrl);
+    } catch (requestError) {
+      setError(requestError.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="seat-confirm-bar" role="group" aria-label="Seat order awaiting confirmation">
+      <div>
+        <strong>Seat agent prepared an order</strong>
+        <span>{proposal.quantity} seats · {proposal.className} · {proposal.currency} {proposal.unitPrice} each · <strong>{proposal.currency} {proposal.total} total</strong></span>
+        {error && <span className="seat-confirm-error" role="alert">{error}</span>}
+      </div>
+      <div>
+        <button className="checkout-button" type="button" onClick={confirm} disabled={busy}><Check size={14} />{busy ? 'Opening PayPal…' : 'Confirm and pay with PayPal'}</button>
+        <button className="agent-cancel" type="button" onClick={onDismiss} disabled={busy}><X size={14} />Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
 // Instructor analytics: an AG Studio report over the signed-in instructor's own orders. The
 // server decides whose orders these are from the access token; nothing here picks a user.
-export default function InstructorAnalytics({ accessToken, assistantAvailable }) {
+export default function InstructorAnalytics({ accessToken, assistantAvailable, seatAgentAvailable = false }) {
   const [analytics, setAnalytics] = useState(null);
   const [error, setError] = useState('');
   const [mode, setMode] = useState('view');
   const tokenRef = useRef(accessToken);
   tokenRef.current = accessToken;
   const { onBusyChange, seconds } = useAssistantProgress();
+  const [seatProposal, setSeatProposal] = useState(null);
 
   // Studio's agents can only read this report's data and build widgets; every turn goes through
-  // the sign-in-only proxy, which holds the NVIDIA key and refuses any non-Studio tool. The agents
-  // are tuned for fewer, shorter turns (src/analytics/studioAgents.js).
+  // the sign-in-only proxy, which holds the model key and refuses any non-Studio tool. The agents
+  // are tuned for fewer, shorter turns (src/analytics/studioAgents.js). Seat requests go to the
+  // Seat agent, which runs in the browser against /api/agent/chat and only prepares a proposal.
   const ai = useMemo(() => (assistantAvailable
     ? ({ api }) => createAiHarness(api, (ctx) => studioHarnessConfig(ctx, {
       adapter: nvidiaStudioAdapter({ getAccessToken: () => tokenRef.current, onBusyChange }),
       directLlmRunner,
       promptStarters: PROMPT_STARTERS,
+      customAgents: seatAgentAvailable ? [createSeatAgent({ getAccessToken: () => tokenRef.current, onProposal: setSeatProposal })] : [],
     }))
-    : undefined), [assistantAvailable, onBusyChange]);
+    : undefined), [assistantAvailable, seatAgentAvailable, onBusyChange]);
 
   useEffect(() => {
     let active = true;
@@ -111,6 +152,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable })
           </>
         )}
       </div>
+      {seatProposal && <SeatConfirmBar key={seatProposal.id} proposal={seatProposal} accessToken={accessToken} onDismiss={() => setSeatProposal(null)} />}
       {!error && !data && <div className="grid-empty">Loading your orders…</div>}
       {data && (
         <div className="analytics-canvas">

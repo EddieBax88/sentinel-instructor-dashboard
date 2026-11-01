@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PRELOADED_TOOLS, studioHarnessConfig, tuneAgent } from './studioAgents.js';
+import { BUILT_IN_DELEGATES, PRELOADED_TOOLS, studioHarnessConfig, tuneAgent, withCustomDelegates } from './studioAgents.js';
 
 const fixtures = JSON.parse(readFileSync(new URL('../../scripts/fixtures/studio-agent-requests.json', import.meta.url), 'utf8'));
 
@@ -59,4 +59,26 @@ test('the harness config runs all five tuned agents on one adapter, starting fro
   assert.deepEqual(config.agents.map((agent) => agent.id).sort(), ['data', 'lead', 'page', 'planning', 'widget']);
   assert.ok(config.agents.every((agent) => agent.adapter === adapter && agent.name && typeof agent.run === 'function'));
   assert.deepEqual(config.promptStarters, [{ label: 'x', prompt: 'y' }]);
+});
+
+test('with a custom agent, the lead can delegate to it alongside the four built-ins and is told when to', () => {
+  const lead = { id: 'lead', instructions: () => 'Studio lead prompt', tools: () => [{ name: 'view_schema' }, { name: 'delegate_to', targets: BUILT_IN_DELEGATES }] };
+  const delegateTo = (targets) => ({ name: 'delegate_to', targets });
+  const extended = withCustomDelegates(lead, ['seat']);
+  const tools = extended.tools({ tools: { delegateTo } }, {});
+  assert.deepEqual(tools.map((tool) => tool.name), ['view_schema', 'delegate_to']);
+  assert.deepEqual(tools[1].targets, ['data', 'widget', 'page', 'planning', 'seat']);
+  assert.match(extended.instructions({}, {}), /^Studio lead prompt\n- Seat requests .*hand off to the Seat agent with delegate_to \(type "seat"\)/s);
+  assert.equal(withCustomDelegates(lead, []), lead);
+
+  const seat = { id: 'seat', name: 'Seat agent', run: async function* run() {} };
+  const runner = (config) => ({ ...config, run: config.run ?? (() => {}) });
+  const config = studioHarnessConfig({ builtIn }, { adapter: {}, directLlmRunner: runner, customAgents: [seat] });
+  assert.deepEqual(config.agents.map((agent) => agent.id).sort(), ['data', 'lead', 'page', 'planning', 'seat', 'widget']);
+  assert.equal(config.agents.find((agent) => agent.id === 'seat'), seat);
+  const builtLead = config.agents.find((agent) => agent.id === 'lead');
+  assert.match(builtLead.instructions({}, {}), /Seat agent/);
+  assert.match(builtLead.instructions({}, {}), /Speed rules/);
+  const noSeat = studioHarnessConfig({ builtIn }, { adapter: {}, directLlmRunner: runner });
+  assert.doesNotMatch(noSeat.agents.find((agent) => agent.id === 'lead').instructions({}, {}), /Seat agent/);
 });

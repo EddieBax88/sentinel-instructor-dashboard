@@ -6,7 +6,8 @@ import { authenticateSupabaseUser, getBearerToken } from './supabase.js';
 
 // Every tool AG Studio 3.0's agents can call: they read the report's data and schema and edit
 // widgets, filters, pages, and plans in the browser. None places orders or moves money; seat
-// purchases stay in the seat assistant with its Confirm step. Requests offering any other tool
+// requests go to the Seat agent (src/analytics/seatAgent.js), which runs in the browser against
+// /api/agent/chat, and purchases still need the instructor's Confirm. Requests offering any other tool
 // are refused, so this proxy cannot be used to drive other tools with the model key.
 export const STUDIO_TOOL_NAMES = new Set([
   'view_schema', 'view_report', 'view_page', 'view_plan', 'view_widget',
@@ -17,9 +18,11 @@ export const STUDIO_TOOL_NAMES = new Set([
   'delegate_to', 'complete_task',
 ]);
 
-const SCOPE_NOTE = 'You are the analytics assistant in an instructor dashboard. You can only read the '
+const SCOPE_NOTE = 'You are the analytics assistant in an instructor dashboard. You read the '
   + "instructor's seat-order data and build or change report widgets. You cannot buy seats, create orders, "
-  + 'or take payments; if asked, say to use the Seat assistant on the Overview page, which asks for confirmation.';
+  + 'or take payments yourself. For buying, ordering or pricing seats, hand off to the Seat agent '
+  + '(delegate_to type "seat"); it prepares a proposal that the instructor must confirm on the dashboard. '
+  + 'Never say seats were ordered or paid for.';
 
 const MAX_MESSAGES = 200;
 const MAX_TOOLS = 30;

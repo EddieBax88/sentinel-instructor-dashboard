@@ -47,10 +47,33 @@ export function tuneAgent(definition) {
   };
 }
 
-// The createAiHarness config builder: Studio's agents, tuned, each on the given adapter.
-export function studioHarnessConfig({ builtIn }, { adapter, directLlmRunner, promptStarters }) {
+// The lead's own delegation targets in AG Studio 3.0 (its delegate_to list is fixed in Studio).
+export const BUILT_IN_DELEGATES = ['data', 'widget', 'page', 'planning'];
+
+const SEAT_HANDOFF_RULES = `- Seat requests (buying, ordering or pricing class seats, or how many seats are available or pending): hand off to the Seat agent with delegate_to (type "seat"), passing the instructor's request in plain words. It prepares a proposal that the instructor confirms on the dashboard. Never say seats were ordered or paid for.`;
+
+// The lead with custom agents added to its delegate_to targets, and told when to use the Seat agent.
+export function withCustomDelegates(lead, customAgentIds) {
+  if (!customAgentIds.length) return lead;
   return {
-    agents: Object.values(builtIn).map((definition) => directLlmRunner({ ...tuneAgent(definition), adapter })),
+    ...lead,
+    tools: (ctx, params) => (lead.tools?.(ctx, params) ?? []).map((tool) => (
+      tool.name === 'delegate_to' ? ctx.tools.delegateTo([...BUILT_IN_DELEGATES, ...customAgentIds]) : tool
+    )),
+    instructions: (ctx, params) => [lead.instructions?.(ctx, params), SEAT_HANDOFF_RULES].filter(Boolean).join('\n'),
+  };
+}
+
+// The createAiHarness config builder: Studio's agents, tuned, each on the given adapter, plus any
+// custom agents (which run their own code) as delegation targets for the lead.
+export function studioHarnessConfig({ builtIn }, { adapter, directLlmRunner, promptStarters, customAgents = [] }) {
+  const customIds = customAgents.map((agent) => agent.id);
+  const builtInAgents = Object.values(builtIn).map((definition) => {
+    const tuned = tuneAgent(definition);
+    return directLlmRunner({ ...(definition.id === 'lead' ? withCustomDelegates(tuned, customIds) : tuned), adapter });
+  });
+  return {
+    agents: [...builtInAgents, ...customAgents],
     primary: 'lead',
     promptStarters,
   };
