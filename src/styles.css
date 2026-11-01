@@ -23,6 +23,20 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .sandbox-chip, .live-tag { display: inline-flex; align-items: center; gap: 7px; color: #4f7c62; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
 .sandbox-chip { padding: 7px 9px; border: 1px solid #d4e5d8; background: #f7fbf7; border-radius: 4px; }
 .sandbox-chip i, .live-tag i { width: 6px; height: 6px; background: #50a77a; border-radius: 50%; }
+.topbar-actions { display: inline-flex; align-items: center; gap: 8px; }
+.events-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; color: var(--green); background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; cursor: pointer; }
+.events-toggle[aria-expanded="true"] { background: var(--green-soft); }
+.events-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(380px, 100vw); display: flex; flex-direction: column; gap: 10px; padding: 18px 16px; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(32, 42, 40, .08); }
+.events-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.events-head h2 { margin: 4px 0 0; font: 800 18px var(--heading-font); }
+.events-close { padding: 4px; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.events-note, .events-empty { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.events-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.events-list li { display: flex; flex-direction: column; gap: 4px; padding: 10px 11px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 4px; }
+.events-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.events-row time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.events-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--ink); font-size: 11px; }
+.events-list code { color: var(--muted); font-size: 10px; }
 .intro { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; padding: 35px 0 25px; }
 .eyebrow { margin: 0 0 10px; }
 h1, h2, h3, p { margin-top: 0; }

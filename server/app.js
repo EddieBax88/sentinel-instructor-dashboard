@@ -6,8 +6,8 @@ import { isAnthropicConfigured } from './anthropic.js';
 import analyticsRouter from './analytics.js';
 import studioAiRouter from './studioAi.js';
 import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
-import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, publicSupabaseConfiguration } from './supabase.js';
-import webhookRouter from './webhook.js';
+import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, publicSupabaseConfiguration } from './supabase.js';
+import webhookRouter, { publicWebhookEvent } from './webhook.js';
 import { dashboardFromOrders } from './seatUnlock.js';
 
 const app = express();
@@ -81,6 +81,18 @@ app.post('/api/agent/proposals/:proposalId/confirm', async (request, response) =
   try {
     const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
     response.status(201).json(await confirmProposal({ proposalId: request.params.proposalId, userId: user.id }));
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
+});
+
+// Verified PayPal webhook events for the signed-in instructor's own orders (event drawer).
+app.get('/api/paypal/events', async (request, response) => {
+  try {
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    const rows = await listWebhookEventsForUser(user.id);
+    response.set('Cache-Control', 'no-store');
+    response.json({ events: rows.map(publicWebhookEvent) });
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
   }

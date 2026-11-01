@@ -245,3 +245,40 @@ export async function getSeatProposal(proposalId) {
   }
   return rows[0] ? proposalFromRow(rows[0]) : null;
 }
+
+// Verified PayPal webhook events (see supabase/migrations/20261101200000_paypal_webhook_events.sql).
+// Server-only table. A retried event (same event_id) is ignored, not an error.
+export async function recordWebhookEvent(row) {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_webhook_events?on_conflict=event_id`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+    body: JSON.stringify(row),
+  });
+  if (!response.ok) {
+    await readJson(response);
+    throw Object.assign(new Error(`Could not record the PayPal event in Supabase (${response.status}).`), { statusCode: 502 });
+  }
+}
+
+// Reads only the verified user's events: userId always comes from authenticateSupabaseUser.
+export async function listWebhookEventsForUser(userId, limit = 50) {
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required.'), { statusCode: 401 });
+  }
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const query = new URLSearchParams({
+    select: 'event_id,event_type,resource_type,resource_id,resource_status,paypal_order_id,amount,currency,event_created_at,received_at',
+    user_id: `eq.${userId}`,
+    order: 'received_at.desc',
+    limit: String(limit),
+  });
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_webhook_events?${query}`, {
+    headers: serviceHeaders(serviceRoleKey, { Accept: 'application/json' }),
+  });
+  const rows = await readJson(response);
+  if (!response.ok || !Array.isArray(rows)) {
+    throw Object.assign(new Error(`Could not read PayPal events from Supabase (${response.status}).`), { statusCode: 502 });
+  }
+  return rows;
+}

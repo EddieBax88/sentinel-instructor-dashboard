@@ -81,6 +81,7 @@ Apply the files in `supabase/migrations` in order, in the Supabase SQL editor or
 2. `20261028150000_agent_actions_and_seat_quantity.sql`: multi-seat quantity, the seat assistant's `agent_actions` log, and the idempotent seat grant function. Safe to re-run.
 3. `20261028200000_rename_seat_grant.sql`: renames the seat grant function to `grant_seat_access` and the entitlement product code to `instructor_seat`, converting existing rows, then drops the old function. Safe to re-run.
 4. `20261031180000_seat_proposals.sql`: the `seat_proposals` table, where the seat assistant keeps a proposal for 10 minutes until the instructor confirms it. Server-only (RLS on, no policies). Safe to re-run.
+5. `20261101200000_paypal_webhook_events.sql`: the `paypal_webhook_events` table behind the **PayPal events** drawer. One row per verified webhook event, keyed by PayPal's event ID so retries add nothing; only the event type, IDs, status and amount are kept, no payer details. Server-only (RLS on, no policies). Safe to re-run. Until it is applied, webhooks still work; events are just not recorded.
 
 Run them in this order. If you re-run file 2 later, run file 3 again after it, since file 2 recreates the function under its original name. The server calls the function named by `SEAT_GRANT_FUNCTION` in `server/supabase.js`, which is `grant_seat_access`, so apply file 3 before running this version of the server.
 
