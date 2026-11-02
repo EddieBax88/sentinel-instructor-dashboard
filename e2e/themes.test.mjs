@@ -94,7 +94,11 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     page.on('pageerror', (error) => pageErrors.push(error.message));
     // The browser never reaches Supabase: the session is seeded, and anything else is a failure.
     await page.route('https://example.supabase.co/**', (route) => route.fulfill({ status: 500, body: 'unexpected browser request to Supabase' }));
-    await page.route('**/api/studio-ai/chat', (route) => route.fulfill({ status: 500, json: { error: 'no model turns in this test' } }));
+    let modelCalls = 0;
+    await page.route('**/api/studio-ai/chat', (route) => {
+      modelCalls += 1;
+      return route.fulfill({ status: 500, json: { error: 'no model turns in this test' } });
+    });
     await page.addInitScript(({ instructor }) => {
       if (!localStorage.getItem('sb-example-auth-token')) {
         localStorage.setItem('sb-example-auth-token', JSON.stringify({
@@ -118,6 +122,13 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     await statusCells.first().waitFor({ timeout: 30_000 });
     const pills = await statusCells.evaluateAll((cells) => cells.map((cell) => [cell.textContent, cell.className]));
     assert.deepEqual(pills.sort(), [['AWAITING PAYMENT', 'status-cell status-pending'], ['COMPLETED', 'status-cell status-completed'], ['REFUNDED', 'status-cell status-refunded']]);
+
+    // Seat assistant chips fill the input and send nothing.
+    const seatChips = page.getByRole('group', { name: 'Example seat requests' }).getByRole('button');
+    assert.deepEqual(await seatChips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class']);
+    await seatChips.nth(1).click();
+    assert.equal(await page.locator('#agent-input').inputValue(), 'Buy 3 seats for the spring class');
+    assert.equal(await page.locator('.agent-log').count(), 0, 'a chip fills the input, it does not send');
 
     const switcher = page.getByRole('radiogroup', { name: 'Theme' });
     assert.deepEqual(await switcher.getByRole('radio').evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Black', 'Industrial', 'Light']);
@@ -163,6 +174,13 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
       await page.getByRole('button', { name: 'Ask AI' }).click();
       const input = page.locator('textarea.ag-studio-ai-assistant-textarea');
       await input.waitFor({ timeout: 60_000 });
+      // Judge chips sit under Studio's input, fill it, and send nothing.
+      const askChips = page.locator('.ag-studio-ai-assistant-input').getByRole('group', { name: 'Example questions' }).getByRole('button');
+      await askChips.first().waitFor({ timeout: 30_000 });
+      assert.deepEqual(await askChips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Revenue by class as a column chart', 'Buy 5 seats for the fall class']);
+      await askChips.nth(1).click();
+      assert.equal(await input.inputValue(), 'Buy 5 seats for the fall class');
+      assert.equal(modelCalls, 0, 'a chip fills the input, it does not send');
       await page.screenshot({ path: `${SHOTS}ask-ai-${name}.png`, fullPage: true });
       await page.goto(`${origin}/`);
       await page.locator('.seat-counter').waitFor({ timeout: 60_000 });

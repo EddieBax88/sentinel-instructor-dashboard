@@ -2,6 +2,8 @@ import { AgStudioAiModule, createAiHarness, directLlmRunner, enableStudioDevVali
 import { AgStudio, AgStudioProvider } from 'ag-studio-react';
 import { Check, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import PromptChips from './PromptChips.jsx';
 import { nvidiaStudioAdapter } from '../analytics/nvidiaAdapter.js';
 import { initialReport } from '../analytics/initialReport.js';
 import { createSeatAgent } from '../analytics/seatAgent.js';
@@ -12,12 +14,13 @@ import { studioWidgets } from '../analytics/widgets.jsx';
 
 if (import.meta.env.DEV) enableStudioDevValidations();
 
-// Shown in a new analytics chat before anything is typed.
-const PROMPT_STARTERS = [
-  { label: 'Show revenue by class', prompt: 'Add a column chart of revenue by class.' },
-  { label: 'Seats pending by day', prompt: 'Add a chart of seats pending by order date (day).' },
-  { label: 'Unpaid seats by class', prompt: 'Which class has the most seats still awaiting payment? Answer, then add a grid of seats pending and awaiting payment by class.' },
-];
+// Judge prompts under the Ask AI input. They fill the input rather than send (Studio's own prompt
+// starters send on click, so none are configured). Both work end to end: the first is a Studio
+// built-in widget, the second exercises the lead-to-Seat-agent handoff (e2e/seatAgent.test.mjs).
+export const ASK_AI_CHIPS = ['Revenue by class as a column chart', 'Buy 5 seats for the fall class'];
+const PROMPT_STARTERS = [];
+const STUDIO_INPUT = '.ag-studio-ai-assistant-input';
+const STUDIO_TEXTAREA = 'textarea.ag-studio-ai-assistant-textarea';
 
 // "Ask AI" is edit mode with only the AI panel: Studio shows its assistant in edit mode only.
 const PANELS = {
@@ -51,6 +54,37 @@ function useAssistantProgress() {
 
   const seconds = startedAt === null ? null : Math.max(0, Math.round((now - startedAt) / 1000));
   return { onBusyChange, seconds };
+}
+
+// Finds Studio's Ask AI input container once the panel has rendered (and again if Studio rebuilds
+// it), so the chips can be portalled underneath it. Studio reads the textarea's value when Send is
+// clicked, so filling it needs no Studio API.
+function useStudioAiInput(sectionRef, active) {
+  const [host, setHost] = useState(null);
+  useEffect(() => {
+    if (!active || !sectionRef.current) {
+      setHost(null);
+      return undefined;
+    }
+    const section = sectionRef.current;
+    const find = () => setHost((current) => {
+      const next = section.querySelector(STUDIO_INPUT);
+      return next === current ? current : next;
+    });
+    find();
+    const observer = new MutationObserver(find);
+    observer.observe(section, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [sectionRef, active]);
+  return host;
+}
+
+function fillStudioInput(host, text) {
+  const textarea = host.querySelector(STUDIO_TEXTAREA);
+  if (!textarea) return;
+  textarea.value = text;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.focus();
 }
 
 async function readResponse(response) {
@@ -105,6 +139,8 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
   tokenRef.current = accessToken;
   const { onBusyChange, seconds } = useAssistantProgress();
   const [seatProposal, setSeatProposal] = useState(null);
+  const sectionRef = useRef(null);
+  const chipHost = useStudioAiInput(sectionRef, mode === 'ask' && assistantAvailable);
 
   // Studio's agents can only read this report's data and build widgets; every turn goes through
   // the sign-in-only proxy, which holds the model key and refuses any non-Studio tool. The agents
@@ -133,7 +169,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
   const context = useMemo(() => ({ classSize: analytics?.classSize ?? 0 }), [analytics]);
 
   return (
-    <section id="analytics" className="analytics-section">
+    <section id="analytics" className="analytics-section" ref={sectionRef}>
       <div className="section-title">
         <div><p className="eyebrow">YOUR ORDERS ONLY</p><h2>Instructor analytics</h2></div>
         <div className="analytics-modes" role="group" aria-label="Report mode">
@@ -152,6 +188,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
           </>
         )}
       </div>
+      {chipHost && createPortal(<PromptChips prompts={ASK_AI_CHIPS} onPick={(text) => fillStudioInput(chipHost, text)} label="Example questions" />, chipHost)}
       {seatProposal && <SeatConfirmBar key={seatProposal.id} proposal={seatProposal} accessToken={accessToken} onDismiss={() => setSeatProposal(null)} />}
       {!error && !data && <div className="grid-empty">Loading your orders…</div>}
       {data && (

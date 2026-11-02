@@ -132,6 +132,11 @@ footer { margin-top: 22px; padding-top: 13px; color: var(--muted-foreground); bo
 .agent-proposal div { display: flex; gap: 8px; }
 .agent-cancel { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--foreground); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; cursor: pointer; }
 .agent-panel .checkout-form input { flex: 1; width: auto; }
+.prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.prompt-chip { padding: 5px 10px; color: var(--primary-strong); background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; font-size: 10px; font-weight: 600; cursor: pointer; }
+.prompt-chip:hover { border-color: var(--primary); }
+/* Under AG Studio's Ask AI input, portalled into its input container. */
+.ag-studio-ai-assistant-input .prompt-chips { margin: 0; padding: 6px 8px 8px; }
 .analytics-section { margin-top: 8px; }
 .analytics-modes { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--card); }
 .analytics-modes button { padding: 6px 11px; color: var(--muted-foreground); background: var(--card); border: 0; font-size: 10px; font-weight: 700; cursor: pointer; }

@@ -1,5 +1,6 @@
 import { Bot, Check, X } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import PromptChips from './PromptChips.jsx';
 
 // Renders **bold** spans as <strong>; React escapes the text, and stray asterisks are dropped.
 function formatReply(text) {
@@ -16,12 +17,23 @@ async function readResponse(response) {
   return payload;
 }
 
-export default function AgentPanel({ authHeaders, available }) {
+// Judge prompts. Each one works end to end: the purchase chips go through the seat agent to a
+// Confirm bar and PayPal Sandbox. The refund chip appears only when the server offers refunds.
+export const SEAT_CHIPS = ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class'];
+export const REFUND_CHIP = 'Refund my last seat order';
+
+export default function AgentPanel({ authHeaders, available, refundAvailable = false }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [proposal, setProposal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const inputRef = useRef(null);
+
+  function pickChip(prompt) {
+    setDraft(prompt);
+    inputRef.current?.focus();
+  }
 
   async function send(event) {
     event.preventDefault();
@@ -84,9 +96,10 @@ export default function AgentPanel({ authHeaders, available }) {
       {error && <p className="notice" role="alert">{error}</p>}
       <form className="checkout-form" onSubmit={send}>
         <label className="sr-only" htmlFor="agent-input">Message the seat assistant</label>
-        <input id="agent-input" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={available ? 'Buy 12 seats for my fall class' : 'Add NVIDIA_API_KEY to .env'} maxLength="2000" disabled={!available || busy} />
+        <input id="agent-input" ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={available ? 'Buy 12 seats for my fall class' : 'Add NVIDIA_API_KEY to .env'} maxLength="2000" disabled={!available || busy} />
         <button className="checkout-button" type="submit" disabled={!available || busy || !draft.trim()}>{busy ? 'Working…' : 'Send'}</button>
       </form>
+      {available && <PromptChips prompts={refundAvailable ? [...SEAT_CHIPS, REFUND_CHIP] : SEAT_CHIPS} onPick={pickChip} label="Example seat requests" />}
     </section>
   );
 }
