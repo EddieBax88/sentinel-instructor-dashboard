@@ -2,35 +2,39 @@
 
 Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
-## Repo state (Nov 1, 2026, end of the unattended session)
+## Repo state (Nov 2, 2026, end of the second unattended session)
 
-- Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push.
-- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. PR #2 (`ccr-90064225-vddchi` into this branch) shows as merged: its one commit (31d7e60) was fast-forwarded onto this branch, and GitHub marked the PR merged when it landed (Nov 1, 20:39 UTC). Nothing to do; the `ccr-90064225-vddchi` branch can be deleted.
-- Commits this session, oldest first (each pushed, deployed READY on Vercel, and `GET /api/health` answered `{"status":"ok"}` after the deploy):
-  - `31d7e60` HANDOFF: hosted demo, live webhook, applied migrations, Seat agent recorded.
-  - `f4d2ae6` Brand theme (Inter + Fraunces, oklch tokens), Class fill widget, sidebar link to www.sentinellearning.com.
-  - `f6b5a8b` Repo hygiene for judges: README rewritten, .env.example complete, cloudflared.deb removed from the tree.
-  - `08e06b2` Refund to seat revoke: PAYMENT.CAPTURE.REFUNDED handling, migration written (not applied), Refunded state in ledger, analytics and grid.
-  - `66f9956` DEMO-SCRIPT.md: sub-3-minute click path.
+- Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
+- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. The judged README and LICENSE are the ones on `main` (see SUBMISSION.md checklist).
+- Commits this session, oldest first (each pushed, deployed READY, health `ok` with that commit):
+  - `f1333e0` Seat math: pending orders no longer reduce the seats remaining; header pill "N awaiting payment"; `/api/health` reports the commit.
+  - `a863f9e` Triple theme: Black & Safety-Yellow (default), Industrial, Light; Studio re-themed through sRGB twins; AA contrast tests; browser test.
+  - `4f323cc` Honest product context: STUDENT columns renamed CLASS; one product line under the hero.
+  - `0bcbdeb` Judge prompt chips under the Seat assistant and Ask AI inputs.
+  - `601f146` Agent-driven refund with a Confirm gate (direct Captures Refund API); Studio input colours fixed.
+  - `f369688` Reset demo data (confirmed, sandbox-only, own rows only).
+  - `172a8a8` Submission pack: SUBMISSION.md and the updated DEMO-SCRIPT.md.
   - This file's commit (final HANDOFF).
-- Tests: `npm test` 126/126 pass (no network calls); `npm run test:browser` 1/1 pass (headless Chromium, Ask AI lead to Seat agent to Confirm to PayPal, against the real API routes).
-- Node: `engines.node` is `22.x` (Vercel deploys Node 26 for `>=22`; Supabase and openai need 22, Vite needs 22.12).
+- Tests: `npm test` 162/162 (no network calls); `npm run test:browser` 3/3 (headless Chromium: themes and chips; refund chip to Confirm to sandbox refund to REFUNDED ledger to reset; Ask AI lead to Seat agent to Confirm to PayPal). Both browser harnesses now pick a free Vite HMR port, so they run together.
+- Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
-- Migrations applied to the hackathon Supabase project: the first five in `supabase/migrations` (through `20261101200000_paypal_webhook_events.sql`).
-- Migration written, NOT applied: `20261102000000_refunds_and_seat_revoke.sql`. See "Owner decisions needed".
-- PayPal sandbox webhook: verified live for `PAYMENT.CAPTURE.COMPLETED`. `PAYMENT.CAPTURE.REFUNDED` is not yet on the subscription.
+- Migrations applied to the hackathon Supabase project: the first five, plus (per the mission brief) `20261102000000_refunds_and_seat_revoke.sql`.
+- Migration written, NOT applied: `20261103000000_refund_agent_actions.sql` (adds `refund_proposed`, `refund_issued`, `refund_failed`, `refund_rejected`, `demo_reset` to the `agent_actions` check). Until applied, those five actions are not logged (the server warns; the refund and the reset still work).
+- PayPal sandbox webhook: `PAYMENT.CAPTURE.COMPLETED` verified live. `PAYMENT.CAPTURE.REFUNDED` still not on the subscription (owner decision 2). The Confirm-gated refund revokes seats itself when PayPal answers COMPLETED, so the demo works without it; the drawer's "Payment refunded" entry needs it.
 
 ## Owner decisions needed
 
-1. **Apply the refund migration.** Run `supabase/migrations/20261102000000_refunds_and_seat_revoke.sql` in the hackathon project's SQL editor (one transaction, safe to re-run). Until then a refund webhook answers 5xx (PayPal retries for 3 days) and nothing changes.
-2. **Add `PAYMENT.CAPTURE.REFUNDED` to the PayPal sandbox webhook subscription** (developer.paypal.com > Apps & Credentials > the sandbox app > Webhooks > edit the `<demo URL>/api/paypal/webhook` subscription > add the event). Then test live: refund the sandbox capture in full from the business account's Activity page and check the drawer, ledger and analytics. Do this before recording the refund part of the video.
-3. **Judge test account.** README has the demo URL and says to create an account. No shared judge credentials were created or written anywhere (a public repo is the wrong place). Decide whether to create one and where to give it to judges (the submission form, not the repo).
-4. **cloudflared.deb in history.** It is out of the tree but still in git history: the commit that added it (`4a52b8a`) is on `main`, which PR #1 targets, so rewriting it means rewriting `main`. The earlier plan item "scrub git history right before submission, keeping commit dates" would cover it; that rewrite needs you.
-5. **Logo.** No logo asset exists in the repo, so the sidebar keeps the GraduationCap mark with "sentinel." in Fraunces. Supply a logo file if you want the real mark.
-6. **AA contrast choice.** White text on the raw brand primary `oklch(58% .19 50)` is 4.45:1, just under WCAG AA for normal text, so buttons and small primary text use a darker step `--primary-strong oklch(50% .17 50)` (6.2:1). The raw primary is used for large text, bars, icons and chart 1. Override in `src/styles.css` if you want the raw primary on buttons regardless.
-7. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is already merged, see above).
-8. **Anthropic key (~Nov 2):** live probe and Ask AI timing on Claude (`npm run probe:studio-agent`, then pick model and effort in `server/config.js`); check the live lead-to-Seat-agent handoff; revisit strict tools if the probe shows malformed calls.
-9. **AG Studio trial license (~Nov 5):** key via env, served to the browser like the Supabase publishable key, to remove the watermark.
+1. **Apply `20261103000000_refund_agent_actions.sql`** in the hackathon project's SQL editor (one transaction, safe to re-run). Until then refund and reset actions are not written to `agent_actions`.
+2. **Add `PAYMENT.CAPTURE.REFUNDED` to the PayPal sandbox webhook subscription** (developer.paypal.com > Apps & Credentials > the sandbox app > Webhooks > edit the `<demo URL>/api/paypal/webhook` subscription). The agent-driven refund already revokes seats on Confirm; this only adds the "Payment refunded" drawer entry and the webhook's alreadyRevoked path, both untested live.
+3. **Live test the refund path** once: buy, then "Refund my last seat order" > Confirm, in the hosted demo with real sandbox credentials. Built and browser-tested against fakes only (this session had no PayPal access).
+4. **Refund revoke timing.** The Confirm endpoint revokes seats immediately when PayPal answers COMPLETED and leaves a PENDING refund to the webhook. If you want webhook-only revoke, delete the `revokeSeatAccess` call in `refundSandboxCapture` (`server/paypal.js`); the tests in `server/refundCapture.test.js` then need the `revoked` expectations flipped.
+5. **Demo reset is not one transaction.** It deletes table by table (entitlements, payments, orders, proposals, events, actions), each filtered to the signed-in user; a failure part-way is a 502 and a second click finishes. A single SQL function would be atomic but needs another migration; say if you want that.
+6. **Judge test account.** Still none created or written anywhere. SUBMISSION.md says to put credentials in the form, not the repo.
+7. **cloudflared.deb and the old names in history** (unchanged): the rewrite of `main` is yours.
+8. **Logo** (unchanged): no asset in the repo; the sidebar keeps the GraduationCap mark.
+9. **Theme defaults.** Black & Safety-Yellow is the default as briefed. The Light theme keeps `--primary-strong` for buttons and small text (AA); the dark themes use the raw primary everywhere because it already clears AA on their surfaces. The Industrial `--accent-soft` tint was darkened to `oklch(25% .035 45)` to keep primary text on it at 4.5:1.
+10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged).
+11. **Anthropic key (~Nov 2) and AG Studio trial license (~Nov 5)**: unchanged from the previous handoff.
 
 ## Hard rules
 
@@ -63,11 +67,25 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 ## Things that looked worse or need a second look
 
+- **AG Studio and oklch (bigger than yesterday's chart finding).** Studio resolves theme colours in JavaScript (`getColorForVar` to `computedColorToHex`, accepting only `rgb()` and `color(srgb)`) not only for charts but for widget, canvas and inner-grid backgrounds and text. With oklch tokens, dark themes showed white widgets with white text. Every theme now emits `--srgb-*` hex twins and `src/analytics/theme.js` uses only those for colour params; `src/theme/themes.test.js` fails if a colour param points at an oklch token again.
+- **Studio textarea colour.** Studio's AI textarea sets no colour and Studio fixed `color-scheme: light`, so typed text was black on the dark themes. Fixed with `browserColorScheme: 'inherit'` plus `.ag-studio-ai-assistant-textarea { color: var(--srgb-foreground) }`; the browser test asserts it.
+- **Studio prompt starters removed.** They send on click; the mission wanted chips that fill the input. The Ask AI chips are React-portalled into Studio's input container (`.ag-studio-ai-assistant-input`), found by a MutationObserver. If a Studio upgrade renames that class the chips silently disappear; the browser test would catch it.
+- **Refund test flake, fixed.** AG Grid re-renders a frame after the header; the ledger assertion now waits for the grid instead of reading once.
+- **`seatsRemaining` semantics changed.** Pending orders no longer reduce it (that was the "0 / 30" bug). The seat agent's `get_current_seats` description says so; the agent tests were updated. `seatsReserved` is still reported separately.
+- **Demo reset is deliberately a plain DELETE per table**, not an RPC, so it works before any new migration. See owner decision 5.
 - AG Studio converts computed colors for AG Charts' canvas only from `rgb()` or `color(srgb)`. With oklch tokens the charts silently fell back to Studio's default blue/green palette; fixed by giving chart tokens sRGB hex values (`--chart-*`, `--chart-text`, `--chart-line` in `src/styles.css`). Any new Studio color param that reaches a chart must use those hex tokens, not the oklch ones.
 - Running `npm run test:browser` while another Vite dev server is up on the same machine fails with "WebSocket closed without opened" (Vite's HMR port 24678 is taken). Run it alone.
 - The error notice (`.notice[role="alert"]`) is now red on the muted grey, where the old theme showed every notice in green. Deliberate, for AA, but it reads louder than before.
 - `listPaypalOrdersForUser` and `getPaypalOrder` deliberately do not select the new `refund_id` and `refunded_at` columns, so the live ledger keeps working before the migration is applied. Once it is applied, selecting them is safe.
 - The `ccr-90064225-vddchi` branch is a leftover from the retired session (its PR #2 is merged).
+
+## Research: @paypal/agent-toolkit for a refund-only tool (Nov 2, ~20 min)
+
+Question: can `@paypal/agent-toolkit` be used for ONLY a refund tool without touching the working order path?
+
+- **Yes, technically.** The README (npm `@paypal/agent-toolkit` 1.11.0, "Available tools" > "Payments") lists `create_refund`: "Process a refund for a captured payment." Its "Usage" section shows `configuration.actions` gating, and the bundle's action map has `payments: { createRefund: true }`, so a toolkit instance can expose only that tool. The implementation (`createRefund` in the bundle) posts to `${baseUrl}/v2/payments/captures/${capture_id}/refund`, the same Captures Refund API. It would run beside, not inside, the existing order code (`server/paypal.js`), which it would not touch.
+- **Not low risk, so not used.** (1) It is built for model-invoked tool calling (zod schemas, `run(method, arg)` returning JSON strings for an LLM), while the brief requires a human Confirm, not a model call. (2) `dependencies` add 13 packages: `ai`, `openai@4.86.1` (this repo uses `openai` 7), `@langchain/core`, `@modelcontextprotocol/sdk`, `axios`, `mathjs`, `lodash`, `@dotenvx/dotenvx`, `@paypal/paypal-server-sdk`, and more. (3) Sandbox versus live is chosen by the toolkit's own `context.sandbox` (`baseUrl = sandbox ? api-m.sandbox.paypal.com : api-m.paypal.com`), outside this repo's hard guard that refuses any non-sandbox host. (4) It manages its own OAuth token separately from the server's token cache.
+- **Decision:** call the Captures Refund API directly (`refundSandboxCapture` in `server/paypal.js`, ~40 lines) behind the existing sandbox guard, with a fixed `PayPal-Request-Id` for idempotency. The toolkit tarball was inspected in a scratch directory and never installed into the repo.
 
 ## Refund design (server/webhook.js, 08e06b2)
 
@@ -75,6 +93,16 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 - The event is recorded for the drawer with the order and owner from that lookup. Then: no link, unknown capture, status not `COMPLETED`, or amount/currency not equal to the recorded capture (partial) answer 200 with `revoked: false` and a reason, since a PayPal retry could not change the outcome. A full refund calls `revoke_seat_access`; a repeat answers `alreadyRevoked`. A Supabase failure answers 5xx so PayPal retries.
 - `revoke_seat_access(p_user_id, p_order_id, p_capture_id, p_refund_id, p_amount, p_currency)` locks the order row, checks owner, capture and amount, marks payment and order `REFUNDED`, records `refund_id` and `refunded_at`, deactivates `user_entitlements` only when the instructor has no other `COMPLETED` order, and returns `'revoked'` or `'already_revoked'`.
 - Refunded state: ledger status `REFUNDED`, readiness "Seat revoked", `seatsRefunded` in the quota row and a REFUNDED column in Class seats; analytics status `Refunded` with `seatsRefunded` and `refundedAmount`; Studio measures Seats Refunded and Refunded.
+
+## This session's code map
+
+- `src/theme/themes.js`: the three themes (oklch tokens, chart palette, status colours), `srgbTokens`, `chartTokens`, `themeCss`, `readStoredTheme`/`storeTheme` (try/catch), `applyTheme`. `scripts/build-theme-css.mjs` writes `src/theme-tokens.css` (committed; `npm run build:theme-css`). `src/theme/oklch.js`: oklch to sRGB and WCAG contrast. `index.html`: inline pre-paint script with the same storage key. `src/components/ThemeSwitcher.jsx`: the 3-segment control.
+- `src/components/statusClass.js` + `.status-cell` pills in `SeatTable.jsx`; `--status-*` tokens per theme.
+- `src/analytics/seatProgress.js`: Seat progress widget model (remaining = class size minus unlocked).
+- `src/components/PromptChips.jsx`: chips; `AgentPanel.jsx` (`SEAT_CHIPS`, `REFUND_CHIP`), `InstructorAnalytics.jsx` (`ASK_AI_CHIPS`, portalled under Studio's input).
+- Refund: `server/agent.js` `propose_refund` and `latestRefundableCapture`; `server/paypal.js` `refundSandboxCapture`; `POST /api/paypal/captures/:captureId/refund` in `server/app.js`; `src/components/RefundConfirmBar.jsx`; `src/analytics/seatAgent.js` `proposalArtifact`. Tests: `server/refundCapture.test.js`, `server/agent.test.js`, `e2e/dashboard.test.mjs`.
+- Reset: `server/supabase.js` `resetDemoDataForUser` and `DEMO_RESET_TABLES`; `POST /api/demo/reset`; `src/components/ResetDemoButton.jsx`. Tests: `server/demoReset.test.js`, `e2e/dashboard.test.mjs`.
+- `SUBMISSION.md`: Devpost fields and the Nov 5 checklist. `DEMO-SCRIPT.md`: updated click path.
 
 ## Ask AI code map
 
@@ -97,8 +125,9 @@ Tools are sent without `strict: true`. The live probe (Nov 2) measures tool-call
 
 ## Remaining (in order)
 
-1. Owner decisions 1 and 2 (refund migration and webhook event), then a live refund test.
-2. Record the video from `DEMO-SCRIPT.md` (the Ask AI steps need the Anthropic key, the refund steps need item 1).
+1. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
+2. Record the video from `DEMO-SCRIPT.md` (the Ask AI steps need the Anthropic key).
 3. Live probe on Claude when the key arrives; pick model and effort.
 4. AG Studio trial license (~Nov 5).
-5. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
+5. Nov 5 early check from `SUBMISSION.md`.
+6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
