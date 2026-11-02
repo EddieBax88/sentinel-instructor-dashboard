@@ -3,8 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f9fafc" />
+    <meta name="theme-color" content="#050607" />
     <title>Sentinel | Instructor dashboard</title>
+    <!-- Theme before first paint: reads the saved choice (same key as src/theme/themes.js) and sets
+         data-theme on <html> so the token stylesheet picks it up with no flash of the wrong theme.
+         Unknown or unreadable values fall back to the default, "black-yellow". -->
+    <script>
+      (function () {
+        var names = { "black-yellow": "dark", "industrial": "dark", "light": "light" };
+        var theme = "black-yellow";
+        try { var saved = localStorage.getItem("sentinel-dashboard-theme"); if (names[saved]) theme = saved; } catch (e) {}
+        document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.style.colorScheme = names[theme];
+      })();
+    </script>
+    <style>
+      html { background: #050607; }
+      html[data-theme="industrial"] { background: #23140a; }
+      html[data-theme="light"] { background: #f9fafc; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

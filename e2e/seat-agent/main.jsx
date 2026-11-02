@@ -4,6 +4,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import InstructorAnalytics from '../../src/components/InstructorAnalytics.jsx';
+import '../../src/theme-tokens.css';
 import '../../src/styles.css';
 
 createRoot(document.getElementById('root')).render(

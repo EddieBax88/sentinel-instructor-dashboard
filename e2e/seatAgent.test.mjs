@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import { createServer as createNetServer } from 'node:net';
 import { chromium } from 'playwright';
 import { createServer as createViteServer } from 'vite';
 
@@ -15,6 +16,15 @@ const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
 const ORDER_ID = 'ORDER-SEAT-12';
 const APPROVAL_URL = `https://www.sandbox.paypal.com/checkoutnow?token=${ORDER_ID}`;
 const originalFetch = globalThis.fetch;
+// Each browser test file runs in its own process with its own Vite dev server; Vite's HMR socket
+// defaults to one fixed port (24678), so the second server would fail. Give each a free port.
+const freePort = () => new Promise((resolve) => {
+  const probe = createNetServer();
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address();
+    probe.close(() => resolve(port));
+  });
+});
 
 const calls = { auth: [], nvidia: [], proposalsSaved: [], proposalsClaimed: 0, ordersSaved: [], paypalOrders: [] };
 let proposals = [];
@@ -86,7 +96,7 @@ test('the lead hands a seat request to the Seat agent, which calls /api/agent/ch
   globalThis.fetch = fakeFetch;
 
   const { default: app } = await import('../server/app.js');
-  const vite = await createViteServer({ configFile: false, logLevel: 'error', appType: 'mpa', server: { middlewareMode: true } });
+  const vite = await createViteServer({ configFile: false, logLevel: 'error', appType: 'mpa', server: { middlewareMode: true, hmr: { port: await freePort() } } });
   const server = express();
   server.use(app);
   server.use(vite.middlewares);

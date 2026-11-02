@@ -1,5 +1,6 @@
 import { ClientSideRowModelModule, ModuleRegistry, themeQuartz } from 'ag-grid-community';
 import { AgGridReact } from 'ag-grid-react';
+import { statusClass } from './statusClass.js';
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -15,13 +16,17 @@ const gridTheme = themeQuartz.withParams({
   backgroundColor: 'var(--card)',
   borderColor: 'var(--border)',
   rowBorder: { color: 'var(--border)' },
-  rowHoverColor: 'var(--accent)',
+  rowHoverColor: 'var(--accent-soft)',
   accentColor: 'var(--primary)',
   headerHeight: 32,
   rowHeight: 34,
   wrapperBorder: false,
   wrapperBorderRadius: 0,
 });
+
+function StatusCell({ value }) {
+  return value ? <span className={`status-cell ${statusClass(value)}`}>{value}</span> : null;
+}
 
 const defaultColDef = { flex: 1, minWidth: 112, sortable: true, resizable: true };
 const transactionColumns = [
@@ -30,7 +35,7 @@ const transactionColumns = [
   { field: 'quantity', headerName: 'SEATS', minWidth: 80 },
   { field: 'captureId', headerName: 'CAPTURE ID', minWidth: 155, valueFormatter: ({ value }) => value || '—' },
   { field: 'amount', headerName: 'AMOUNT', minWidth: 100, valueFormatter: ({ data }) => data ? `${data.currency} ${data.amount}` : '—' },
-  { field: 'status', headerName: 'PAYMENT STATUS', minWidth: 150 },
+  { field: 'status', headerName: 'PAYMENT STATUS', minWidth: 150, cellRenderer: StatusCell },
 ];
 const quotaColumns = [
   { field: 'cohort', headerName: 'COHORT', minWidth: 170 },
@@ -43,7 +48,7 @@ const quotaColumns = [
 const studentColumns = [
   { field: 'name', headerName: 'STUDENT', minWidth: 150 },
   { field: 'cohort', headerName: 'COHORT', minWidth: 170 },
-  { field: 'readiness', headerName: 'READINESS', minWidth: 155 },
+  { field: 'readiness', headerName: 'READINESS', minWidth: 155, cellRenderer: StatusCell },
 ];
 
 function GridTable({ rows, columns, emptyText }) {

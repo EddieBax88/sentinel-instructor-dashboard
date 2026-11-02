@@ -1,11 +1,17 @@
 // AG Studio theme for Instructor analytics. Values point at the Sentinel Learning brand tokens in
-// src/styles.css (Inter for text, Fraunces for titles, --primary for accents), so Studio's canvas,
-// widgets, grids and charts match the rest of the dashboard.
+// src/theme-tokens.css (Inter for text, Fraunces for titles, --primary for accents), so Studio's
+// canvas, widgets, grids and charts match the rest of the dashboard and follow the theme switch:
+// Studio re-reads every token when its style sensor sees the foreground/background change.
 
 import { studioTheme } from 'ag-studio';
 
+// Colour params use the --srgb-* hex twins of the brand tokens (src/theme/themes.js): Studio resolves
+// theme colours in JavaScript and converts only rgb() or color(srgb), so an oklch token would fall
+// back to Studio's default (white widgets, dark text) in the dark themes. Non-colour params use the
+// plain tokens.
 const token = (name) => `var(--${name})`;
-const line = (color) => ({ width: 1, color: token(color) });
+const srgb = (name) => `var(--srgb-${name})`;
+const line = (color) => ({ width: 1, color: srgb(color) });
 
 const palette = Object.fromEntries(
   Array.from({ length: 6 }, (_, i) => [
@@ -17,69 +23,68 @@ const palette = Object.fromEntries(
 export const instructorStudioTheme = studioTheme.withParams({
   fontFamily: token('font'),
   fontSize: 12,
-  textColor: token('foreground'),
-  foregroundColor: token('foreground'),
-  subtleTextColor: token('muted-foreground'),
-  backgroundColor: token('card'),
-  borderColor: token('border'),
-  accentColor: token('primary'),
-  iconColor: token('primary'),
-  rowHoverColor: token('accent'),
+  textColor: srgb('foreground'),
+  foregroundColor: srgb('foreground'),
+  subtleTextColor: srgb('muted-foreground'),
+  backgroundColor: srgb('card'),
+  borderColor: srgb('border'),
+  accentColor: srgb('primary'),
+  iconColor: srgb('primary'),
+  rowHoverColor: srgb('accent-soft'),
 
   studioWrapperBorder: false,
   studioWrapperBorderRadius: 0,
   studioWrapperSpacing: 0,
-  studioWrapperBackgroundColor: token('background'),
+  studioWrapperBackgroundColor: srgb('background'),
   studioCanvasBorder: false,
   studioCanvasBorderRadius: 0,
   studioCanvasShadow: false,
-  studioCanvasBackgroundColor: token('background'),
+  studioCanvasBackgroundColor: srgb('background'),
   studioCanvasPadding: 4,
   studioCanvasFontFamily: token('font'),
 
   // Widgets look like the dashboard's cards: white, 1px border, the brand's small radius.
-  studioWidgetBackgroundColor: token('card'),
+  studioWidgetBackgroundColor: srgb('card'),
   studioWidgetBorder: line('border'),
   studioWidgetBorderRadius: 6,
   studioWidgetPadding: 10,
   studioWidgetTitleFontFamily: token('heading-font'),
   studioWidgetTitleFontSize: 13,
   studioWidgetTitleFontWeight: 700,
-  studioWidgetTitleTextColor: token('foreground'),
+  studioWidgetTitleTextColor: srgb('foreground'),
   studioWidgetSubtitleFontFamily: token('font'),
-  studioWidgetSubtitleTextColor: token('muted-foreground'),
+  studioWidgetSubtitleTextColor: srgb('muted-foreground'),
   studioWidgetCaptionFontFamily: token('font'),
-  studioWidgetCaptionTextColor: token('muted-foreground'),
-  studioWidgetResizeBorderColor: token('primary'),
+  studioWidgetCaptionTextColor: srgb('muted-foreground'),
+  studioWidgetResizeBorderColor: srgb('primary'),
 
-  studioPanelContainerBackgroundColor: token('card'),
+  studioPanelContainerBackgroundColor: srgb('card'),
   studioPanelContainerBorder: line('border'),
-  studioPanelDividerColor: token('border'),
-  studioPanelDividerActiveColor: token('primary'),
-  studioPanelSectionBorderColor: token('border'),
+  studioPanelDividerColor: srgb('border'),
+  studioPanelDividerActiveColor: srgb('primary'),
+  studioPanelSectionBorderColor: srgb('border'),
   studioPanelHeaderFontFamily: token('heading-font'),
   studioPanelHeaderFontWeight: 700,
-  studioPanelChevronButtonHoverBackgroundColor: token('accent'),
-  studioPanelChevronButtonHoverColor: token('primary'),
-  studioToggleButtonActiveBackgroundColor: token('accent'),
-  studioToggleButtonActiveBorderColor: token('primary'),
-  studioToggleButtonActiveColor: token('primary'),
+  studioPanelChevronButtonHoverBackgroundColor: srgb('accent-soft'),
+  studioPanelChevronButtonHoverColor: srgb('primary'),
+  studioToggleButtonActiveBackgroundColor: srgb('accent-soft'),
+  studioToggleButtonActiveBorderColor: srgb('primary'),
+  studioToggleButtonActiveColor: srgb('primary'),
 
   gridFontFamily: token('font'),
   gridFontSize: 11,
-  gridCellTextColor: token('foreground'),
-  gridHeaderBackgroundColor: token('muted'),
-  gridHeaderTextColor: token('muted-foreground'),
+  gridCellTextColor: srgb('foreground'),
+  gridHeaderBackgroundColor: srgb('muted'),
+  gridHeaderTextColor: srgb('muted-foreground'),
   gridHeaderFontWeight: 700,
   gridHeaderFontSize: 10,
   gridRowHeight: 34,
   gridRowBorder: line('border'),
   gridHeaderRowBorder: line('border'),
-  gridRowHoverColor: token('accent'),
+  gridRowHoverColor: srgb('accent-soft'),
   gridWrapperBorder: false,
 
-  // Chart colors use the sRGB chart tokens: Studio converts computed colors for AG Charts' canvas
-  // only from rgb() or color(srgb), so the oklch brand tokens cannot be used here.
+  // Chart text and lines use the sRGB chart tokens for the same reason.
   chartFontFamily: token('font'),
   chartTextColor: token('chart-text'),
   chartSubtleTextColor: token('chart-subtle-text'),

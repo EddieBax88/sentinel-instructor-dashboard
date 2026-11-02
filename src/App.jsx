@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AgentPanel from './components/AgentPanel.jsx';
 import EventDrawer from './components/EventDrawer.jsx';
 import SeatTable from './components/SeatTable.jsx';
+import ThemeSwitcher from './components/ThemeSwitcher.jsx';
 
 const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
 // AG Studio is large, so it loads only when the analytics view opens.
@@ -153,6 +154,7 @@ export default function App() {
           <span className="breadcrumb">SENTINEL <span>/</span> INSTRUCTOR WORKSPACE</span>
           <div className="topbar-actions">
             <EventDrawer accessToken={accessToken} />
+            <ThemeSwitcher />
             <span className="sandbox-chip"><i />PAYPAL SANDBOX</span>
           </div>
         </header>
