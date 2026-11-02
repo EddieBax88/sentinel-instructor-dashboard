@@ -78,6 +78,11 @@ function configuration() {
   return { clientId: PAYPAL_CLIENT_ID, secret: PAYPAL_SECRET };
 }
 
+// Throws unless PayPal is configured for the sandbox (the only environment this app allows).
+export function assertSandbox() {
+  configuration();
+}
+
 export function isPaypalConfigured() {
   try {
     configuration();

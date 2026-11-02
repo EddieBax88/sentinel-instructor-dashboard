@@ -331,3 +331,37 @@ export async function listWebhookEventsForUser(userId, limit = 50) {
   }
   return rows;
 }
+
+// Demo reset: the tables that hold one instructor's sandbox data, in an order that respects the
+// foreign keys (entitlements reference payments, payments reference orders).
+export const DEMO_RESET_TABLES = Object.freeze(['user_entitlements', 'paypal_payments', 'paypal_orders', 'seat_proposals', 'paypal_webhook_events', 'agent_actions']);
+
+// Deletes ONLY the given instructor's rows from each demo table. Every DELETE carries a user_id
+// filter (PostgREST applies it server-side with the secret key), asks for the deleted rows back,
+// and the rows are checked again here: a row with another user_id aborts before the next table.
+// userId always comes from authenticateSupabaseUser, never from the request. Not one transaction:
+// a failure part-way leaves earlier tables already cleared, which a second reset finishes.
+export async function resetDemoDataForUser(userId) {
+  if (typeof userId !== 'string' || !UUID.test(userId)) {
+    throw Object.assign(new Error('A verified Supabase account is required.'), { statusCode: 401 });
+  }
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const deleted = {};
+  for (const table of DEMO_RESET_TABLES) {
+    const query = new URLSearchParams({ user_id: `eq.${userId}`, select: 'user_id' });
+    const response = await fetch(`${baseUrl}/rest/v1/${table}?${query}`, {
+      method: 'DELETE',
+      headers: serviceHeaders(serviceRoleKey, { Prefer: 'return=representation', Accept: 'application/json' }),
+    });
+    const rows = await readJson(response);
+    if (!response.ok || !Array.isArray(rows)) {
+      throw Object.assign(new Error(`Could not reset ${table} (Supabase ${response.status}).`), { statusCode: 502 });
+    }
+    const foreign = rows.filter((row) => row.user_id !== userId);
+    if (foreign.length) {
+      throw Object.assign(new Error(`Reset of ${table} touched a row that is not yours; stopped.`), { statusCode: 500 });
+    }
+    deleted[table] = rows.length;
+  }
+  return deleted;
+}

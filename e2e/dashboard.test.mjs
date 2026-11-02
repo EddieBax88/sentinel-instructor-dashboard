@@ -4,7 +4,8 @@
 //    applied before first paint), and AG Studio following the theme: the active theme's chart-1 hex
 //    must appear on the chart canvas and the previous theme's must not.
 // 2. Agent-driven refund: the refund chip, the seat assistant's proposal, the Confirm gate, the
-//    sandbox refund call, and the ledger showing the order REFUNDED with its seats back.
+//    sandbox refund call, the ledger showing the order REFUNDED with its seats back, then the
+//    demo reset behind its confirm dialog, deleting only this instructor's rows.
 // Screenshots go to e2e/shots (gitignored).
 //
 //   npm run test:browser
@@ -39,7 +40,7 @@ const ORDERS = [
   { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
 ];
 
-const calls = { nvidia: [], refunds: [], revokes: [], actions: [] };
+const calls = { nvidia: [], refunds: [], revokes: [], actions: [], deletes: [] };
 // The seat assistant's model, scripted: a refund request becomes a propose_refund call, then a reply.
 const nvidiaReplies = [
   { choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'nv-1', type: 'function', function: { name: 'propose_refund', arguments: '{}' } }] } }] },
@@ -51,6 +52,16 @@ async function fakeFetch(url, options = {}) {
   if (hostname === '127.0.0.1' || hostname === 'localhost') return originalFetch(url, options);
   if (hostname === 'example.supabase.co') {
     if (pathname === '/auth/v1/user') return options.headers.Authorization === 'Bearer instructor-token' ? Response.json({ id: INSTRUCTOR }) : Response.json({}, { status: 401 });
+    if (options.method === 'DELETE') {
+      // The demo reset: PostgREST deletes and returns only the filtered rows.
+      const table = pathname.replace('/rest/v1/', '');
+      calls.deletes.push({ table, filter: searchParams.get('user_id') });
+      if (table === 'paypal_orders' && searchParams.get('user_id') === `eq.${INSTRUCTOR}`) {
+        const removed = ORDERS.splice(0, ORDERS.length);
+        return Response.json(removed.map((row) => ({ user_id: row.user_id })));
+      }
+      return Response.json([]);
+    }
     if (pathname === '/rest/v1/paypal_orders') return Response.json(ORDERS);
     if (pathname === '/rest/v1/paypal_webhook_events') return Response.json([]);
     if (pathname === '/rest/v1/agent_actions') {
@@ -249,7 +260,7 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
   }
 });
 
-test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, and a REFUNDED ledger', { timeout: 180_000 }, async () => {
+test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, a REFUNDED ledger, and the reset clears it', { timeout: 180_000 }, async () => {
   const { page, origin, pageErrors, stop } = await startDashboard();
   try {
     await page.goto(`${origin}/`);
@@ -295,6 +306,24 @@ test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, a
       return JSON.stringify(pills) === JSON.stringify(['AWAITING PAYMENT', 'REFUNDED', 'REFUNDED']);
     }, null, { timeout: 30_000 });
     await page.screenshot({ path: `${SHOTS}refund-done.png`, fullPage: true });
+
+    // Reset demo data: a confirm dialog first, then only this instructor's rows go, and the ledger empties.
+    await page.getByRole('button', { name: 'Reset demo data' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Reset demo data?' });
+    await dialog.waitFor();
+    assert.equal(calls.deletes.length, 0, 'opening the dialog deletes nothing');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(calls.deletes.length, 0, 'cancel deletes nothing');
+    await page.getByRole('button', { name: 'Reset demo data' }).click();
+    await page.screenshot({ path: `${SHOTS}reset-confirm.png` });
+    await dialog.getByRole('button', { name: 'Reset my demo data' }).click();
+    await page.getByText('Demo data reset: 3 orders removed.').waitFor({ timeout: 30_000 });
+    assert.deepEqual(calls.deletes.map((call) => call.table), ['user_entitlements', 'paypal_payments', 'paypal_orders', 'seat_proposals', 'paypal_webhook_events', 'agent_actions']);
+    assert.ok(calls.deletes.every((call) => call.filter === `eq.${INSTRUCTOR}`), 'every delete is filtered to the signed-in instructor');
+    await page.getByText('No seat orders yet.').waitFor({ timeout: 30_000 });
+    await page.waitForFunction(() => /SEATS REMAINING\s*30\s*\/\s*30/.test(document.querySelector('.seat-counter')?.innerText ?? ''), null, { timeout: 30_000 });
+    assert.equal(await page.locator('.seat-pill').count(), 0);
     assert.deepEqual(pageErrors, []);
   } finally {
     await stop();

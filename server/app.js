@@ -5,8 +5,8 @@ import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
 import { isAnthropicConfigured } from './anthropic.js';
 import analyticsRouter from './analytics.js';
 import studioAiRouter from './studioAi.js';
-import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured, refundSandboxCapture } from './paypal.js';
-import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, publicSupabaseConfiguration } from './supabase.js';
+import { assertSandbox, captureSandboxOrder, createSandboxOrder, isPaypalConfigured, refundSandboxCapture } from './paypal.js';
+import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, logAgentAction, publicSupabaseConfiguration, resetDemoDataForUser } from './supabase.js';
 import webhookRouter, { publicWebhookEvent } from './webhook.js';
 import { dashboardFromOrders } from './seatUnlock.js';
 
@@ -106,6 +106,21 @@ app.get('/api/paypal/events', async (request, response) => {
     const rows = await listWebhookEventsForUser(user.id);
     response.set('Cache-Control', 'no-store');
     response.json({ events: rows.map(publicWebhookEvent) });
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
+});
+
+// Clean state for a demo: deletes the signed-in instructor's own sandbox rows (orders, payments,
+// proposals, PayPal events, assistant log) and their seat entitlement. Sandbox only, sign-in only,
+// and the UI asks for confirmation first. PayPal's own sandbox records are not touched.
+app.post('/api/demo/reset', async (request, response) => {
+  try {
+    assertSandbox();
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    const deleted = await resetDemoDataForUser(user.id);
+    await logAgentAction({ userId: user.id, action: 'demo_reset', details: { deleted } });
+    response.json({ reset: true, deleted });
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
   }

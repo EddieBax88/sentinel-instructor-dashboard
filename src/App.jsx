@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AgentPanel from './components/AgentPanel.jsx';
 import EventDrawer from './components/EventDrawer.jsx';
+import ResetDemoButton from './components/ResetDemoButton.jsx';
 import SeatTable from './components/SeatTable.jsx';
 import ThemeSwitcher from './components/ThemeSwitcher.jsx';
 
@@ -154,6 +155,7 @@ export default function App() {
           <span className="breadcrumb">SENTINEL <span>/</span> INSTRUCTOR WORKSPACE</span>
           <div className="topbar-actions">
             <EventDrawer accessToken={accessToken} />
+            {session && <ResetDemoButton authHeaders={authHeaders} onReset={(summary) => { setNotice(summary); setLedgerVersion((version) => version + 1); }} />}
             <ThemeSwitcher />
             <span className="sandbox-chip"><i />PAYPAL SANDBOX</span>
           </div>
