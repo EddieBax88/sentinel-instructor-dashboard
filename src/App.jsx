@@ -175,7 +175,11 @@ export default function App() {
             <h1>Make room for <em>what's next.</em></h1>
             <p className="subhead">Seat sales, payment confirmation, and student readiness in one place.</p>
           </div>
-          <div className="seat-counter"><span>SEATS REMAINING</span><strong>{quota?.seatsRemaining ?? '—'}<small> / {quota?.classSize ?? '—'}</small></strong></div>
+          <div className="seat-counter">
+            <span>SEATS REMAINING</span>
+            <strong>{quota?.seatsRemaining ?? '—'}<small> / {quota?.classSize ?? '—'}</small></strong>
+            {quota?.seatsReserved > 0 && <em className="seat-pill pending">{quota.seatsReserved} awaiting payment</em>}
+          </div>
         </section>
 
         <section className="checkout-band" aria-label="Sandbox seat checkout">

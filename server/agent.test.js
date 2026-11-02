@@ -121,7 +121,8 @@ test("get_current_seats reads the caller's own orders from Supabase, not server 
   assert.deepEqual(orderQueries, [`eq.${INSTRUCTOR}`]);
   assert.equal(result.defaultClassSize, DEFAULT_CLASS_SIZE);
   assert.equal(result.seatsPending, 3);
-  assert.equal(result.seatsRemaining, DEFAULT_CLASS_SIZE - 3);
+  // Pending orders hold no seat yet, so they never reduce the seats remaining.
+  assert.equal(result.seatsRemaining, DEFAULT_CLASS_SIZE);
   assert.deepEqual(result.yourOrders.map((order) => order.orderId), ['ORDER-A']);
 });
 
@@ -142,7 +143,7 @@ test('allows any order of 1-200 seats with no class-size cap', async () => {
   assert.equal(proposal.total, '9800.00');
   const { result } = await executeTool('get_current_seats', {}, { userId: INSTRUCTOR });
   assert.equal(result.seatsPending, 200);
-  assert.equal(result.seatsRemaining, 0);
+  assert.equal(result.seatsRemaining, DEFAULT_CLASS_SIZE);
 });
 
 test('runs the tool loop and returns a proposal without creating a PayPal order', async () => {

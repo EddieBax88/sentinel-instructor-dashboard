@@ -18,6 +18,13 @@ export function ledgerStatus(storedStatus) {
   return 'AWAITING PAYMENT';
 }
 
+// Seats still open in the class: the class size less the seats actually unlocked (captured).
+// Orders awaiting payment hold no seat yet, so they are reported on their own (seatsReserved)
+// and never subtracted here. A refunded order's seats leave seatsSold, so they come back.
+export function seatsRemaining(classSize, seatsSold) {
+  return Math.max(0, classSize - seatsSold);
+}
+
 const READINESS = { COMPLETED: 'Seat unlocked', REFUNDED: 'Seat revoked', 'AWAITING PAYMENT': 'Payment pending' };
 
 // Builds the ledger from Supabase paypal_orders rows (already limited to one instructor).
@@ -52,7 +59,7 @@ export function dashboardFromOrders(rows) {
       seatsSold,
       seatsReserved,
       seatsRefunded,
-      seatsRemaining: Math.max(0, COHORT.classSize - seatsSold - seatsReserved),
+      seatsRemaining: seatsRemaining(COHORT.classSize, seatsSold),
     }],
     students: orders.map((order) => ({
       id: order.captureId || order.orderId,

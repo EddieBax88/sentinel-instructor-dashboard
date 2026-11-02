@@ -1,6 +1,7 @@
 // Custom AG Studio widgets for Instructor analytics, styled with the dashboard's CSS tokens:
 // - revenueTile: a large money value with an optional supporting number underneath.
-// - seatProgress: unlocked and pending seats as a bar against the default class size.
+// - seatProgress: unlocked and pending seats as a bar against the default class size; remaining counts
+//   unlocked seats only (seatProgress.js).
 // - classFill: one bar per class, seats unlocked against the class size.
 // Studio passes new params on every refresh (data, filters, mapping), so each widget re-queries
 // whenever its props change.
@@ -8,6 +9,7 @@
 import { createWidgets } from 'ag-studio-react';
 import { useEffect, useState } from 'react';
 import { classFillRows } from './classFill.js';
+import { seatProgressModel } from './seatProgress.js';
 
 const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg>`;
 const BARS_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h13"/></svg>`;
@@ -65,23 +67,20 @@ function RevenueTile(props) {
 function SeatProgress(props) {
   const values = useMappedValues(props, ['unlocked', 'pending']);
   if (!values) return null;
-  const classSize = props.context?.classSize ?? 0;
-  const [unlocked, pending] = values.map((entry) => Number(entry.value) || 0);
-  const scale = Math.max(classSize, unlocked + pending, 1);
-  const percent = (seats) => `${(seats / scale) * 100}%`;
-  const remaining = Math.max(0, classSize - unlocked - pending);
+  const [unlockedValue, pendingValue] = values;
+  const model = seatProgressModel({ classSize: props.context?.classSize, unlocked: unlockedValue.value, pending: pendingValue.value });
 
   return (
     <div className="studio-seats">
-      <div className="studio-seats-bar" role="img" aria-label={`${unlocked} seats unlocked and ${pending} pending of a ${classSize}-seat class`}>
-        <span className="unlocked" style={{ width: percent(unlocked) }} />
-        <span className="pending" style={{ width: percent(pending) }} />
+      <div className="studio-seats-bar" role="img" aria-label={model.label}>
+        <span className="unlocked" style={{ width: model.unlockedWidth }} />
+        <span className="pending" style={{ width: model.pendingWidth }} />
       </div>
       <dl>
-        <div><dt><i className="unlocked" />Unlocked</dt><dd>{unlocked}</dd></div>
-        <div><dt><i className="pending" />Pending</dt><dd>{pending}</dd></div>
-        <div><dt>Class size</dt><dd>{classSize}</dd></div>
-        <div><dt>Still to fill</dt><dd>{remaining}</dd></div>
+        <div><dt><i className="unlocked" />Unlocked</dt><dd>{model.unlocked}</dd></div>
+        <div><dt><i className="pending" />Awaiting payment</dt><dd>{model.pending}</dd></div>
+        <div><dt>Class size</dt><dd>{model.classSize}</dd></div>
+        <div><dt>Still to fill</dt><dd>{model.remaining}</dd></div>
       </dl>
     </div>
   );

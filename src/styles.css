@@ -16,6 +16,13 @@
   --muted-foreground: oklch(42% .01 260);
   --accent: oklch(92% .015 70);
   --destructive: oklch(58% .22 25);
+  /* Order status colours: COMPLETED green, AWAITING PAYMENT amber, REFUNDED red. */
+  --status-completed: oklch(93% .05 150);
+  --status-completed-foreground: oklch(36% .12 150);
+  --status-pending: oklch(94% .07 85);
+  --status-pending-foreground: oklch(42% .12 70);
+  --status-refunded: oklch(93% .04 25);
+  --status-refunded-foreground: oklch(45% .19 25);
   --radius: .75rem;
   --radius-sm: calc(var(--radius) - .375rem);
   --font: 'Inter', system-ui, sans-serif;
@@ -83,6 +90,8 @@ h1 em { color: var(--primary); font-style: italic; }
 .seat-counter > span { display: block; color: var(--muted-foreground); font-size: 9px; font-weight: 700; letter-spacing: .9px; }
 .seat-counter strong { display: block; margin-top: 5px; color: var(--primary); font: 700 25px var(--heading-font); }
 .seat-counter small { color: var(--muted-foreground); font: 500 13px var(--font); }
+.seat-pill { display: inline-block; margin-top: 7px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 10px; font-style: normal; font-weight: 600; white-space: nowrap; }
+.seat-pill.pending { color: var(--status-pending-foreground); background: var(--status-pending); border-color: transparent; }
 .checkout-band { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 17px 18px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: var(--radius-sm); }
 .checkout-copy { display: flex; align-items: center; gap: 13px; }
 .checkout-marker { display: grid; place-items: center; width: 33px; height: 33px; color: var(--primary-foreground); background: var(--primary-strong); border-radius: 50%; font: 700 11px var(--heading-font); }

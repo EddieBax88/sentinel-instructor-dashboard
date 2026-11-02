@@ -31,7 +31,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_current_seats',
-    description: "Returns the default class size, seats sold and pending, seats remaining to reach the default class size, and the signed-in instructor's own seat orders.",
+    description: "Returns the default class size, seats sold (unlocked) and pending (ordered, awaiting payment, holding no seat yet), seats remaining (class size less unlocked seats), and the signed-in instructor's own seat orders.",
     parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   },
   {

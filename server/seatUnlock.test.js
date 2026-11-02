@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardFromOrders, ledgerStatus, money } from './seatUnlock.js';
+import { dashboardFromOrders, ledgerStatus, money, seatsRemaining } from './seatUnlock.js';
 import { DEFAULT_CLASS_SIZE } from './config.js';
 
 test('formats stored amounts as two-decimal strings', () => {
@@ -23,8 +23,42 @@ test('builds the ledger from Supabase rows so a server restart cannot hide order
   assert.equal(ledger.transactions[1].captureId, 'CAP-2');
   assert.equal(ledger.quotas[0].seatsReserved, 30);
   assert.equal(ledger.quotas[0].seatsSold, 2);
-  assert.equal(ledger.quotas[0].seatsRemaining, 0);
+  assert.equal(ledger.quotas[0].seatsRemaining, DEFAULT_CLASS_SIZE - 2);
   assert.deepEqual(ledger.students.map((student) => student.readiness), ['Payment pending', 'Seat unlocked']);
+});
+
+test('pending orders are reported on their own and never reduce the seats remaining (the "0 / 30" bug)', () => {
+  // Reproduces the live state: 7 unlocked, a 30-seat order awaiting payment, class size 30.
+  const ledger = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-7', student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-7', created_at: '2026-10-27T18:05:00Z' }] },
+    { paypal_order_id: 'ORDER-30', student_name: 'Spring class', quantity: 30, amount: 1470, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T18:00:00Z', paypal_payments: [] },
+    { paypal_order_id: 'ORDER-A', student_name: 'Spring class', quantity: 3, amount: 147, currency: 'USD', status: 'APPROVED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [] },
+  ]);
+  const [quota] = ledger.quotas;
+  assert.equal(quota.classSize, 30);
+  assert.deepEqual([quota.seatsSold, quota.seatsReserved, quota.seatsRefunded, quota.seatsRemaining], [7, 33, 0, 23]);
+});
+
+test('unlocked seats fill the class; remaining is class size less unlocked and never negative', () => {
+  const ledger = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-30', student_name: 'Fall class', quantity: 30, amount: 1470, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-30', created_at: '2026-10-27T18:05:00Z' }] },
+    { paypal_order_id: 'ORDER-5', student_name: 'Fall class', quantity: 5, amount: 245, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-28T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-5', created_at: '2026-10-28T18:05:00Z' }] },
+  ]);
+  assert.deepEqual([ledger.quotas[0].seatsSold, ledger.quotas[0].seatsRemaining], [35, 0]);
+  assert.equal(seatsRemaining(30, 7), 23);
+  assert.equal(seatsRemaining(30, 30), 0);
+  assert.equal(seatsRemaining(30, 31), 0);
+});
+
+test('refunded seats return to the seats remaining', () => {
+  const before = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-12', student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-27T18:05:00Z' }] },
+  ]);
+  const after = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-12', student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-27T18:05:00Z' }] },
+  ]);
+  assert.deepEqual([before.quotas[0].seatsSold, before.quotas[0].seatsRemaining], [12, 18]);
+  assert.deepEqual([after.quotas[0].seatsSold, after.quotas[0].seatsRefunded, after.quotas[0].seatsRemaining], [0, 12, 30]);
 });
 
 test('a refunded order shows REFUNDED, counts in no seat total but refunded, and the student is marked revoked', () => {

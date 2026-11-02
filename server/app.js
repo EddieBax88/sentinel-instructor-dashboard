@@ -99,6 +99,7 @@ app.get('/api/paypal/events', async (request, response) => {
 });
 
 app.use('/api/paypal/webhook', webhookRouter);
-app.get('/api/health', (_request, response) => response.json({ status: 'ok', environment: 'sandbox-only' }));
+// Vercel sets VERCEL_GIT_COMMIT_SHA on every deploy, so the live health check names the commit it runs.
+app.get('/api/health', (_request, response) => response.json({ status: 'ok', environment: 'sandbox-only', commit: process.env.VERCEL_GIT_COMMIT_SHA || undefined }));
 
 export default app;
