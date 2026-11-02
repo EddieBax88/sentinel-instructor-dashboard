@@ -141,3 +141,12 @@ test('a refunded order is Refunded: no revenue, no pending, its seats and amount
 test('an instructor with no orders gets an empty list and the default class size', () => {
   assert.deepEqual(analyticsFromOrders([]), { classSize: DEFAULT_CLASS_SIZE, orders: [] });
 });
+
+test('analytics rows carry one spelling per class so by-class charts do not split on case', () => {
+  const { orders } = analyticsFromOrders([
+    { paypal_order_id: 'ORDER-1', student_name: 'fall class', quantity: 1, amount: 49, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-1', created_at: '2026-10-27T18:05:00Z' }] },
+    { paypal_order_id: 'ORDER-2', student_name: 'Fall class', quantity: 2, amount: 98, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T18:00:00Z', paypal_payments: [] },
+    { paypal_order_id: 'ORDER-3', student_name: 'Fall  class ', quantity: 3, amount: 147, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-3', created_at: '2026-10-29T18:05:00Z' }] },
+  ]);
+  assert.deepEqual([...new Set(orders.map((order) => order.className))], ['Fall class']);
+});

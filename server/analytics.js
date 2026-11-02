@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { DEFAULT_CLASS_SIZE } from './config.js';
+import { canonicalClassNames } from './seatUnlock.js';
 import { authenticateSupabaseUser, getBearerToken, listPaypalOrdersForUser } from './supabase.js';
 
 const money = (value) => Math.round(Number(value) * 100) / 100;
@@ -11,6 +12,8 @@ const STATUS_LABELS = { COMPLETED: 'Unlocked', REFUNDED: 'Refunded' };
 // already split by status (Unlocked, Pending, Refunded) so widgets can simply sum them. Rows must
 // already be limited to one instructor (listPaypalOrdersForUser does that on the server).
 export function analyticsFromOrders(rows) {
+  // One spelling per class, so Studio's by-class grouping never splits "fall class" from "Fall class".
+  const className = canonicalClassNames(rows.map((row) => row.student_name));
   const orders = rows.map((row) => {
     const payment = Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments;
     const status = STATUS_LABELS[row.status] ?? 'Pending';
@@ -21,7 +24,7 @@ export function analyticsFromOrders(rows) {
     const amount = money(row.amount);
     return {
       orderId: row.paypal_order_id,
-      className: row.student_name,
+      className: className(row.student_name),
       status,
       currency: row.currency,
       seats,

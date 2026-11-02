@@ -6,6 +6,37 @@ export const COHORT = Object.freeze({
   classSize: DEFAULT_CLASS_SIZE,
 });
 
+// Class names as typed: trimmed, inner whitespace collapsed, first letter capitalised, the rest
+// as the instructor wrote it ("fall class" becomes "Fall class", "Fall Journeyman Class" stays).
+export function tidyClassName(text) {
+  const collapsed = typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '';
+  return collapsed ? collapsed[0].toUpperCase() + collapsed.slice(1) : '';
+}
+
+const classKey = (text) => tidyClassName(text).toLowerCase();
+
+// One display name per class across an instructor's rows, so "fall class" and "Fall class" group
+// as one class in the ledger, the analytics grids and the Studio charts. The stored rows keep
+// their text; this only decides what is shown. For each case-insensitive key the most frequent
+// spelling (first letter capitalised) wins; a tie is settled alphabetically.
+export function canonicalClassNames(names) {
+  const variants = new Map();
+  for (const raw of names) {
+    const tidy = tidyClassName(raw);
+    if (!tidy) continue;
+    const key = tidy.toLowerCase();
+    const counts = variants.get(key) ?? new Map();
+    counts.set(tidy, (counts.get(tidy) ?? 0) + 1);
+    variants.set(key, counts);
+  }
+  const canonical = new Map();
+  for (const [key, counts] of variants) {
+    const [best] = [...counts.entries()].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b));
+    canonical.set(key, best[0]);
+  }
+  return (raw) => canonical.get(classKey(raw)) ?? tidyClassName(raw);
+}
+
 export function money(value) {
   return Number(value).toFixed(2);
 }
@@ -29,12 +60,13 @@ const READINESS = { COMPLETED: 'Seat unlocked', REFUNDED: 'Seat revoked', 'AWAIT
 
 // Builds the ledger from Supabase paypal_orders rows (already limited to one instructor).
 export function dashboardFromOrders(rows) {
+  const className = canonicalClassNames(rows.map((row) => row.student_name));
   const orders = rows.map((row) => {
     const payment = Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments;
     const status = ledgerStatus(row.status);
     return {
       orderId: row.paypal_order_id,
-      studentName: row.student_name,
+      studentName: className(row.student_name),
       cohortId: COHORT.id,
       quantity: Number(row.quantity ?? 1),
       amount: money(row.amount),

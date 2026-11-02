@@ -4,7 +4,7 @@ import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
 import { claimSeatProposal, getSeatProposal, listPaypalOrdersForUser, logAgentAction, saveSeatProposal } from './supabase.js';
-import { money } from './seatUnlock.js';
+import { canonicalClassNames, money, tidyClassName } from './seatUnlock.js';
 
 const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
@@ -63,7 +63,7 @@ export { replyText };
 
 export function validateSeatRequest({ quantity, class_name: className }) {
   assertSeatQuantity(quantity);
-  const normalizedName = typeof className === 'string' ? className.trim() : '';
+  const normalizedName = tidyClassName(className);
   if (!normalizedName || normalizedName.length > 80) {
     throw Object.assign(new Error('Class name must be 1 to 80 characters.'), { statusCode: 400 });
   }
@@ -77,6 +77,7 @@ function publicProposal({ id, quantity, className, unitPrice, total, currency, e
 // The instructor's most recent paid seat order that still holds its seats: the capture a refund
 // would reverse. Rows come from listPaypalOrdersForUser, so they are the caller's own.
 export function latestRefundableCapture(rows) {
+  const className = canonicalClassNames(rows.map((row) => row.student_name));
   const candidates = rows
     .map((row) => ({ row, payment: Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments }))
     .filter(({ row, payment }) => row.status === 'COMPLETED' && payment?.capture_id)
@@ -87,7 +88,7 @@ export function latestRefundableCapture(rows) {
     type: 'refund',
     captureId: latest.payment.capture_id,
     orderId: latest.row.paypal_order_id,
-    className: latest.row.student_name,
+    className: className(latest.row.student_name),
     quantity: Number(latest.row.quantity ?? 1),
     amount: money(latest.row.amount),
     currency: latest.row.currency,

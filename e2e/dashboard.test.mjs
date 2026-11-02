@@ -37,7 +37,8 @@ const SHOTS = new URL('./shots/', import.meta.url).pathname;
 const ORDERS = [
   { paypal_order_id: 'ORDER-7', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-7', created_at: '2026-10-27T18:05:00Z' }] },
   { paypal_order_id: 'ORDER-30', user_id: INSTRUCTOR, student_name: 'Spring class', quantity: 30, amount: 1470, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T18:00:00Z', paypal_payments: [] },
-  { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
+  // Stored lower-case on purpose (the live table has both spellings): the UI must show it as "Fall class".
+  { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
 ];
 
 const calls = { nvidia: [], refunds: [], revokes: [], actions: [], deletes: [] };
@@ -179,6 +180,9 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     assert.match((await counter.innerText()).replace(/\s+/g, ' '), /SEATS REMAINING 23 \/ 30 30 awaiting payment/);
     await page.getByText("Each seat unlocks Sentinel's NEC exam prep: the 5-Step Method on the 2026 NEC.").waitFor();
     assert.deepEqual(await page.locator('.table-block').first().locator('.ag-header-cell-text').evaluateAll((cells) => cells.map((cell) => cell.textContent)), ['CLASS', 'COHORT', 'SEATS', 'CAPTURE ID', 'AMOUNT', 'PAYMENT STATUS']);
+    // "fall class" and "Fall class" show as one spelling in the ledger.
+    assert.deepEqual((await page.locator('.table-block').first().locator('.ag-cell[col-id="studentName"]').evaluateAll((cells) => cells.map((cell) => cell.textContent))).sort(), ['Fall class', 'Fall class', 'Spring class']);
+    assert.equal(await page.locator('#class-name').getAttribute('placeholder'), 'Class name, e.g. Fall class');
 
     // Status pills in the ledger grid: completed green, awaiting payment amber, refunded red.
     const statusCells = page.locator('.table-block').first().locator('.status-cell');
@@ -218,6 +222,12 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
         }
         return seen.has(hex);
       }, expected['chart-1'], { timeout: 60_000 });
+      if (name === DEFAULT_THEME) {
+        // Studio's by-class grid groups the lower-case row with "Fall class": two classes plus Total.
+        await page.waitForFunction(() => document.querySelectorAll('.analytics-canvas .ag-cell[col-id="orders.className"]').length >= 2, null, { timeout: 60_000 });
+        const classes = await page.locator('.analytics-canvas .ag-cell[col-id="orders.className"]').evaluateAll((cells) => cells.map((cell) => cell.textContent.trim()).filter(Boolean));
+        assert.deepEqual([...new Set(classes)].sort(), ['Fall class', 'Spring class', 'Total']);
+      }
       const colours = await page.evaluate(CANVAS_COLOURS);
       // Studio resolves widget, canvas and inner-grid colours in JavaScript: with oklch tokens they fell
       // back to white widgets and dark text. They must be this theme's card and foreground.

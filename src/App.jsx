@@ -200,8 +200,8 @@ export default function App() {
           </form>
           ) : (
           <form className="checkout-form" onSubmit={beginCheckout}>
-            <label className="sr-only" htmlFor="student-name">Student name</label>
-            <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} name="student-name" placeholder="Student's full name" autoComplete="off" maxLength="80" required />
+            <label className="sr-only" htmlFor="class-name">Class name</label>
+            <input id="class-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} name="class-name" placeholder="Class name, e.g. Fall class" autoComplete="off" maxLength="80" required />
             <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable}>
               {busy ? 'Processing…' : dashboard.paymentAvailable ? 'Buy one seat' : 'Add sandbox credentials'}
               <ArrowUpRight size={16} />

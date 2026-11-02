@@ -14,7 +14,8 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
   - `601f146` Agent-driven refund with a Confirm gate (direct Captures Refund API); Studio input colours fixed.
   - `f369688` Reset demo data (confirmed, sandbox-only, own rows only).
   - `172a8a8` Submission pack: SUBMISSION.md and the updated DEMO-SCRIPT.md.
-  - This file's commit (final HANDOFF).
+  - `96d19ea` HANDOFF after the mission.
+  - This commit: class names group case-insensitively with one spelling (`fall class` and `Fall class` were splitting by-class charts and grids); Card 01's input is labelled "Class name"; Studio widget-picker icons use currentColor (the last hardcoded colour). Tests 164/164, browser 3/3.
 - Tests: `npm test` 162/162 (no network calls); `npm run test:browser` 3/3 (headless Chromium: themes and chips; refund chip to Confirm to sandbox refund to REFUNDED ledger to reset; Ask AI lead to Seat agent to Confirm to PayPal). Both browser harnesses now pick a free Vite HMR port, so they run together.
 - Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
@@ -72,6 +73,8 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 - **Studio prompt starters removed.** They send on click; the mission wanted chips that fill the input. The Ask AI chips are React-portalled into Studio's input container (`.ag-studio-ai-assistant-input`), found by a MutationObserver. If a Studio upgrade renames that class the chips silently disappear; the browser test would catch it.
 - **Refund test flake, fixed.** AG Grid re-renders a frame after the header; the ledger assertion now waits for the grid instead of reading once.
 - **`seatsRemaining` semantics changed.** Pending orders no longer reduce it (that was the "0 / 30" bug). The seat agent's `get_current_seats` description says so; the agent tests were updated. `seatsReserved` is still reported separately.
+- **Class name spelling is decided at read time** (`canonicalClassNames` in `server/seatUnlock.js`): stored rows keep their text; the ledger, analytics rows, refund proposals and PayPal notes show the most frequent spelling per case-insensitive key. New orders are tidied at write time (`tidyClassName`: trim, collapse spaces, capitalise the first letter). Nothing in Supabase was rewritten.
+- **Hardcoded-accent audit:** `src/styles.css` has no colour literals; logo badge, active nav, the "01" circle, the LIVE dot and the PAYPAL SANDBOX pill all use `--primary` / `--primary-strong` / `--accent-soft`. The only literal was the widget-picker SVG stroke in `widgets.jsx`, now `currentColor`.
 - **Demo reset is deliberately a plain DELETE per table**, not an RPC, so it works before any new migration. See owner decision 5.
 - AG Studio converts computed colors for AG Charts' canvas only from `rgb()` or `color(srgb)`. With oklch tokens the charts silently fell back to Studio's default blue/green palette; fixed by giving chart tokens sRGB hex values (`--chart-*`, `--chart-text`, `--chart-line` in `src/styles.css`). Any new Studio color param that reaches a chart must use those hex tokens, not the oklch ones.
 - Running `npm run test:browser` while another Vite dev server is up on the same machine fails with "WebSocket closed without opened" (Vite's HMR port 24678 is taken). Run it alone.

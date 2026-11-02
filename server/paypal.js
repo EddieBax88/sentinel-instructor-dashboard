@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { MAX_SEATS_PER_ORDER } from './config.js';
-import { money } from './seatUnlock.js';
+import { money, tidyClassName } from './seatUnlock.js';
 import { getPaypalOrder, getPaypalOrderByCaptureId, grantSeatAccess, logAgentAction, revokeSeatAccess, savePaypalOrder } from './supabase.js';
 
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
@@ -44,7 +44,7 @@ function completedTransaction(order, capture) {
   return {
     orderId: order.paypal_order_id,
     captureId: capture.captureId,
-    studentName: order.student_name,
+    studentName: tidyClassName(order.student_name),
     quantity: Number(order.quantity ?? 1),
     amount: money(order.amount),
     currency: order.currency,
@@ -149,9 +149,10 @@ async function getAccessToken() {
 }
 
 export async function createSandboxOrder({ studentName, userId, quantity = 1 }) {
-  const normalizedName = typeof studentName === 'string' ? studentName.trim().slice(0, 80) : '';
+  // The field is still called studentName on the wire; it holds the class name the seats are for.
+  const normalizedName = tidyClassName(studentName).slice(0, 80);
   if (!normalizedName) {
-    throw Object.assign(new Error('Enter a student name before starting checkout.'), { statusCode: 400 });
+    throw Object.assign(new Error('Enter a class name before starting checkout.'), { statusCode: 400 });
   }
   if (!userId) {
     throw Object.assign(new Error('A verified Supabase account is required to start checkout.'), { statusCode: 401 });
@@ -326,7 +327,7 @@ export async function refundSandboxCapture({ captureId, userId }) {
       headers: { 'PayPal-Request-Id': `sentinel-refund-${captureId}`, Prefer: 'return=representation' },
       body: JSON.stringify({
         amount: { value: amount, currency_code: currency },
-        note_to_payer: `Refund of ${order.quantity ?? 1} seat(s) for ${order.student_name}`,
+        note_to_payer: `Refund of ${order.quantity ?? 1} seat(s) for ${tidyClassName(order.student_name)}`,
       }),
     });
   } catch (error) {
@@ -345,7 +346,7 @@ export async function refundSandboxCapture({ captureId, userId }) {
     amount,
     currency,
     quantity: Number(order.quantity ?? 1),
-    className: order.student_name,
+    className: tidyClassName(order.student_name),
     revoked: false,
   };
   await logAgentAction({ userId, action: 'refund_issued', details: { captureId, refundId: refund.id, status: result.status, amount, currency } });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dashboardFromOrders, ledgerStatus, money, seatsRemaining } from './seatUnlock.js';
+import { canonicalClassNames, dashboardFromOrders, ledgerStatus, money, seatsRemaining, tidyClassName } from './seatUnlock.js';
 import { DEFAULT_CLASS_SIZE } from './config.js';
 
 test('formats stored amounts as two-decimal strings', () => {
@@ -80,4 +80,26 @@ test('an instructor with no orders gets an empty ledger', () => {
   assert.equal(ledger.quotas[0].seatsReserved, 0);
   assert.equal(ledger.quotas[0].seatsRefunded, 0);
   assert.equal(ledger.quotas[0].seatsRemaining, DEFAULT_CLASS_SIZE);
+});
+
+test('class names group case-insensitively and show one spelling ("fall class" and "Fall class" are one class)', () => {
+  assert.equal(tidyClassName('  fall   class '), 'Fall class');
+  assert.equal(tidyClassName('Fall Journeyman Class'), 'Fall Journeyman Class');
+  assert.equal(tidyClassName(''), '');
+  assert.equal(tidyClassName(undefined), '');
+  const canonical = canonicalClassNames(['fall class', 'Fall class', 'Fall class', 'FALL CLASS', 'spring class']);
+  assert.equal(canonical('fall class'), 'Fall class');
+  assert.equal(canonical('FALL CLASS'), 'Fall class');
+  assert.equal(canonical('Spring Class'), 'Spring class');
+  assert.equal(canonical('unknown'), 'Unknown');
+  // Every spelling is capitalised first; a tie between two is settled alphabetically (locale order).
+  assert.equal(canonicalClassNames(['fall Class', 'Fall class'])('fall class'), 'Fall class');
+  assert.equal(canonicalClassNames(['Fall Class', 'Fall Class', 'fall class'])('FALL class'), 'Fall Class');
+
+  const ledger = dashboardFromOrders([
+    { paypal_order_id: 'ORDER-1', student_name: 'fall class', quantity: 1, amount: 49, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-1', created_at: '2026-10-27T18:05:00Z' }] },
+    { paypal_order_id: 'ORDER-2', student_name: 'Fall class', quantity: 2, amount: 98, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-28T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-2', created_at: '2026-10-28T18:05:00Z' }] },
+  ]);
+  assert.deepEqual(ledger.transactions.map((order) => order.studentName), ['Fall class', 'Fall class']);
+  assert.deepEqual(ledger.students.map((student) => student.name), ['Fall class', 'Fall class']);
 });

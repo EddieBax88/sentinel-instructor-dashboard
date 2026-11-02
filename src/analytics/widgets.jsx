@@ -11,8 +11,9 @@ import { useEffect, useState } from 'react';
 import { classFillRows } from './classFill.js';
 import { seatProgressModel } from './seatProgress.js';
 
-const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg>`;
-const BARS_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#cd4b00" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h13"/></svg>`;
+// Widget-picker icons: Studio inlines the SVG, so currentColor follows the theme's text colour.
+const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15l3-3 3 2 4-5"/></svg>`;
+const BARS_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h13"/></svg>`;
 
 // Fetches one row of aggregated values for the mapped fields and keeps Studio's overlay in sync.
 function useMappedValues(props, keys, requiredKeys = keys) {
