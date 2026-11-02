@@ -135,6 +135,8 @@ footer { margin-top: 22px; padding-top: 13px; color: var(--muted-foreground); bo
 .prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .prompt-chip { padding: 5px 10px; color: var(--primary-strong); background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; font-size: 10px; font-weight: 600; cursor: pointer; }
 .prompt-chip:hover { border-color: var(--primary); }
+/* Studio's Ask AI textarea sets no colour of its own; make typed text the theme foreground. */
+.ag-studio-ai-assistant-textarea { color: var(--srgb-foreground); }
 /* Under AG Studio's Ask AI input, portalled into its input container. */
 .ag-studio-ai-assistant-input .prompt-chips { margin: 0; padding: 6px 8px 8px; }
 .analytics-section { margin-top: 8px; }
@@ -153,6 +155,8 @@ footer { margin-top: 22px; padding-top: 13px; color: var(--muted-foreground); bo
 .seat-confirm-bar > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .seat-confirm-bar > div:first-child > strong { color: var(--primary-strong); }
 .seat-confirm-error { flex-basis: 100%; color: var(--destructive-text); }
+.seat-confirm-bar.refund { border-left-color: var(--status-refunded-strong); }
+.seat-confirm-bar code { padding: 1px 5px; background: var(--muted); border-radius: 4px; font-size: 11px; }
 .analytics-canvas { height: calc(100vh - 170px); min-height: 640px; margin-top: 12px; }
 .studio-revenue { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 4px 6px; }
 .studio-revenue strong { color: var(--primary); font: 700 30px var(--heading-font); }

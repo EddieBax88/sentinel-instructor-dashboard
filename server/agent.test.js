@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmProposal, executeTool, isSeatRequest, OFF_TOPIC_REPLY, replyText, runAgent, validateSeatRequest } from './agent.js';
+import { confirmProposal, executeTool, isSeatRequest, latestRefundableCapture, OFF_TOPIC_REPLY, replyText, runAgent, validateSeatRequest } from './agent.js';
 import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
@@ -164,7 +164,7 @@ test('runs the tool loop and returns a proposal without creating a PayPal order'
 
   const [firstRequest] = client.requests;
   assert.equal(firstRequest.model, AGENT_MODEL);
-  assert.deepEqual(firstRequest.tools.map((tool) => tool.function.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order']);
+  assert.deepEqual(firstRequest.tools.map((tool) => tool.function.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order', 'propose_refund']);
   assert.equal(firstRequest.messages[0].role, 'system');
   assert.ok(firstRequest.messages[0].content.includes('decline in one sentence'));
   assert.deepEqual(firstRequest.chat_template_kwargs, { enable_thinking: true, force_nonempty_content: true });
@@ -405,4 +405,44 @@ test('if Supabase cannot store the proposal, the assistant gets a tool error and
   await assert.rejects(executeTool('create_seat_order', { quantity: 2, class_name: 'Fall class' }, { userId: INSTRUCTOR }), { statusCode: 502 });
   assert.equal(storedProposals.length, 0);
   assert.ok(!loggedActions.some((row) => row.action === 'order_proposed'));
+});
+
+test('propose_refund picks the caller\'s most recent paid capture and issues nothing', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-OLD', user_id: INSTRUCTOR, student_name: 'Spring class', quantity: 2, amount: 98, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-20T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-OLD', created_at: '2026-10-20T10:05:00Z' }] },
+    { paypal_order_id: 'ORDER-NEW', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-NEW', created_at: '2026-10-27T10:05:00Z' }] },
+    { paypal_order_id: 'ORDER-PENDING', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 30, amount: 1470, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T10:00:00Z', paypal_payments: [] },
+    { paypal_order_id: 'ORDER-REFUNDED', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-REFUNDED', created_at: '2026-10-29T10:05:00Z' }] },
+    { paypal_order_id: 'ORDER-OTHER', user_id: OTHER_INSTRUCTOR, student_name: 'Other class', quantity: 9, amount: 441, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-30T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-OTHER', created_at: '2026-10-30T10:05:00Z' }] },
+  ];
+  const { result, proposal } = await executeTool('propose_refund', {}, { userId: INSTRUCTOR });
+  assert.deepEqual(orderQueries, [`eq.${INSTRUCTOR}`]);
+  assert.deepEqual(proposal, { type: 'refund', captureId: 'CAP-NEW', orderId: 'ORDER-NEW', className: 'Fall class', quantity: 7, amount: '343.00', currency: 'USD', capturedAt: '2026-10-27T10:05:00Z' });
+  assert.equal(result.refundable, true);
+  assert.equal(result.status, 'AWAITING_INSTRUCTOR_CONFIRMATION');
+  assert.equal(paypalRequests.length, 0, 'proposing a refund never calls PayPal');
+  assert.deepEqual(loggedActions.map((row) => row.action), ['refund_proposed']);
+
+  storedOrders = storedOrders.filter((row) => row.status !== 'COMPLETED');
+  const none = await executeTool('propose_refund', {}, { userId: INSTRUCTOR });
+  assert.equal(none.proposal, undefined);
+  assert.equal(none.result.refundable, false);
+  assert.equal(latestRefundableCapture([]), null);
+});
+
+test('a refund request is on topic and the loop returns the refund proposal with a Confirm reply', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-NEW', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-NEW', created_at: '2026-10-27T10:05:00Z' }] },
+  ];
+  assert.equal(isSeatRequest([{ role: 'user', content: 'Refund my last seat order' }]), true);
+  const client = scriptedClient([
+    toolCalls(toolCall('t1', 'propose_refund')),
+    textReply(''),
+  ]);
+  const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Refund my last seat order' }], client });
+  assert.equal(proposal.type, 'refund');
+  assert.equal(proposal.captureId, 'CAP-NEW');
+  assert.match(reply, /Ready to refund USD 343\.00 for 7 seats \(Fall class, capture CAP-NEW\)\. Click Confirm to issue the refund\./);
+  assert.equal(paypalRequests.length, 0);
+  assert.match(client.requests[0].messages[0].content, /propose_refund/);
 });

@@ -5,7 +5,7 @@ import { confirmProposal, isAgentConfigured, runAgent } from './agent.js';
 import { isAnthropicConfigured } from './anthropic.js';
 import analyticsRouter from './analytics.js';
 import studioAiRouter from './studioAi.js';
-import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
+import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured, refundSandboxCapture } from './paypal.js';
 import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, publicSupabaseConfiguration } from './supabase.js';
 import webhookRouter, { publicWebhookEvent } from './webhook.js';
 import { dashboardFromOrders } from './seatUnlock.js';
@@ -25,6 +25,8 @@ app.get('/api/dashboard', (_request, response) => {
   response.json({
     paymentAvailable,
     agentAvailable: paymentAvailable && isAgentConfigured(),
+    // Agent-proposed refunds need the seat assistant (to propose) and PayPal (to issue).
+    refundAvailable: paymentAvailable && isAgentConfigured(),
     analyticsAssistantAvailable: isSupabaseConfigured() && isAnthropicConfigured(),
   });
 });
@@ -81,6 +83,17 @@ app.post('/api/agent/proposals/:proposalId/confirm', async (request, response) =
   try {
     const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
     response.status(201).json(await confirmProposal({ proposalId: request.params.proposalId, userId: user.id }));
+  } catch (error) {
+    response.status(error.statusCode || 502).json({ error: error.message });
+  }
+});
+
+// The Confirm gate for an agent-proposed refund: only this click issues the sandbox refund, and
+// only for a completed capture the signed-in instructor owns (checked again on the server).
+app.post('/api/paypal/captures/:captureId/refund', async (request, response) => {
+  try {
+    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
+    response.status(201).json(await refundSandboxCapture({ captureId: request.params.captureId, userId: user.id }));
   } catch (error) {
     response.status(error.statusCode || 502).json({ error: error.message });
   }

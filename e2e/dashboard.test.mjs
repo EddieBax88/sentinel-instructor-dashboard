@@ -1,8 +1,11 @@
-// Headless browser test of the three themes on the real dashboard (src/App.jsx) against the real
-// Express app, with Supabase faked on the server and a seeded browser session. Checks the seat
-// header, the status pills, the switch (persisted in localStorage, applied before first paint), and
-// that AG Studio's charts follow the theme: the active theme's chart-1 hex must appear on the chart
-// canvas and the previous theme's must not. Screenshots go to e2e/shots (gitignored).
+// Headless browser tests of the real dashboard (src/App.jsx) against the real Express app, with
+// Supabase, NVIDIA and PayPal Sandbox faked on the server and a seeded browser session.
+// 1. Themes: the seat header, status pills, judge chips, the switch (persisted in localStorage,
+//    applied before first paint), and AG Studio following the theme: the active theme's chart-1 hex
+//    must appear on the chart canvas and the previous theme's must not.
+// 2. Agent-driven refund: the refund chip, the seat assistant's proposal, the Confirm gate, the
+//    sandbox refund call, and the ledger showing the order REFUNDED with its seats back.
+// Screenshots go to e2e/shots (gitignored).
 //
 //   npm run test:browser
 
@@ -36,34 +39,57 @@ const ORDERS = [
   { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
 ];
 
+const calls = { nvidia: [], refunds: [], revokes: [], actions: [] };
+// The seat assistant's model, scripted: a refund request becomes a propose_refund call, then a reply.
+const nvidiaReplies = [
+  { choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'nv-1', type: 'function', function: { name: 'propose_refund', arguments: '{}' } }] } }] },
+  { choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'I can refund USD 343.00 for the 7 Fall class seats (capture CAP-7). Click Confirm to issue the refund.' } }] },
+];
+
 async function fakeFetch(url, options = {}) {
-  const { hostname, pathname } = new URL(url);
+  const { hostname, pathname, searchParams } = new URL(url);
   if (hostname === '127.0.0.1' || hostname === 'localhost') return originalFetch(url, options);
   if (hostname === 'example.supabase.co') {
     if (pathname === '/auth/v1/user') return options.headers.Authorization === 'Bearer instructor-token' ? Response.json({ id: INSTRUCTOR }) : Response.json({}, { status: 401 });
     if (pathname === '/rest/v1/paypal_orders') return Response.json(ORDERS);
     if (pathname === '/rest/v1/paypal_webhook_events') return Response.json([]);
+    if (pathname === '/rest/v1/agent_actions') {
+      calls.actions.push(JSON.parse(options.body));
+      return new Response(null, { status: 201 });
+    }
+    if (pathname === '/rest/v1/paypal_payments') {
+      const id = searchParams.get('capture_id')?.replace(/^eq\./, '');
+      const order = ORDERS.find((row) => row.paypal_payments[0]?.capture_id === id);
+      return Response.json(order ? [{ capture_id: id, amount: order.amount, currency: order.currency, status: order.status === 'REFUNDED' ? 'REFUNDED' : 'COMPLETED', paypal_orders: order }] : []);
+    }
+    if (pathname === '/rest/v1/rpc/revoke_seat_access') {
+      const body = JSON.parse(options.body);
+      calls.revokes.push(body);
+      const order = ORDERS.find((row) => row.paypal_order_id === body.p_order_id);
+      if (order.status === 'REFUNDED') return Response.json('already_revoked');
+      order.status = 'REFUNDED';
+      return Response.json('revoked');
+    }
+  }
+  if (hostname === 'integrate.api.nvidia.com' && pathname === '/v1/chat/completions') {
+    calls.nvidia.push(JSON.parse(options.body));
+    const reply = nvidiaReplies.shift();
+    if (!reply) throw new Error('No scripted NVIDIA reply left');
+    return Response.json(reply);
+  }
+  if (hostname === 'api-m.sandbox.paypal.com') {
+    if (pathname === '/v1/oauth2/token') return Response.json({ access_token: 'sandbox-token', expires_in: 3600 });
+    const refund = /^\/v2\/payments\/captures\/([^/]+)\/refund$/.exec(pathname);
+    if (refund && options.method === 'POST') {
+      calls.refunds.push({ captureId: refund[1], headers: options.headers, body: JSON.parse(options.body) });
+      return Response.json({ id: `REF-${refund[1]}`, status: 'COMPLETED' }, { status: 201 });
+    }
   }
   throw new Error(`Unexpected server request to ${url}`);
 }
 
-// Counts the distinct opaque colours on every AG Charts canvas inside the Studio canvas.
-const CANVAS_COLOURS = () => {
-  const seen = new Set();
-  for (const canvas of document.querySelectorAll('.analytics-canvas canvas')) {
-    const context = canvas.getContext('2d');
-    if (!context || !canvas.width) continue;
-    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-    for (let i = 0; i < data.length; i += 16) {
-      if (data[i + 3] === 255) seen.add(`#${[data[i], data[i + 1], data[i + 2]].map((c) => c.toString(16).padStart(2, '0')).join('')}`);
-    }
-  }
-  return [...seen];
-};
-
-const cssVar = (page, name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
-
-test('the three themes apply to the dashboard, persist, and re-colour AG Studio charts and the Ask AI panel', { timeout: 240_000 }, async () => {
+// The dashboard under test: real app, faked outside services, a seeded session in the browser.
+async function startDashboard() {
   Object.assign(process.env, {
     SUPABASE_URL: 'https://example.supabase.co',
     SUPABASE_ANON_KEY: 'test-anon-key',
@@ -87,26 +113,52 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
   const origin = `http://127.0.0.1:${listener.address().port}`;
   process.env.APP_BASE_URL = origin;
   const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  // The browser never reaches Supabase: the session is seeded, and anything else is a failure.
+  await page.route('https://example.supabase.co/**', (route) => route.fulfill({ status: 500, body: 'unexpected browser request to Supabase' }));
+  await page.addInitScript(({ instructor }) => {
+    if (!localStorage.getItem('sb-example-auth-token')) {
+      localStorage.setItem('sb-example-auth-token', JSON.stringify({
+        access_token: 'instructor-token', refresh_token: 'refresh', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
+        user: { id: instructor, aud: 'authenticated', role: 'authenticated', email: 'instructor@example.test', app_metadata: {}, user_metadata: {}, created_at: '2026-10-01T00:00:00Z' },
+      }));
+    }
+  }, { instructor: INSTRUCTOR });
+  const stop = async () => {
+    await browser.close();
+    await new Promise((resolve) => listener.close(resolve));
+    await vite.close();
+    globalThis.fetch = originalFetch;
+  };
+  return { page, origin, pageErrors, stop };
+}
 
+// Counts the distinct opaque colours on every AG Charts canvas inside the Studio canvas.
+const CANVAS_COLOURS = () => {
+  const seen = new Set();
+  for (const canvas of document.querySelectorAll('.analytics-canvas canvas')) {
+    const context = canvas.getContext('2d');
+    if (!context || !canvas.width) continue;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < data.length; i += 16) {
+      if (data[i + 3] === 255) seen.add(`#${[data[i], data[i + 1], data[i + 2]].map((c) => c.toString(16).padStart(2, '0')).join('')}`);
+    }
+  }
+  return [...seen];
+};
+
+const cssVar = (page, name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+
+test('the three themes apply to the dashboard, persist, and re-colour AG Studio charts and the Ask AI panel', { timeout: 240_000 }, async () => {
+  const { page, origin, pageErrors, stop } = await startDashboard();
   try {
-    const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
-    const pageErrors = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
-    // The browser never reaches Supabase: the session is seeded, and anything else is a failure.
-    await page.route('https://example.supabase.co/**', (route) => route.fulfill({ status: 500, body: 'unexpected browser request to Supabase' }));
     let modelCalls = 0;
     await page.route('**/api/studio-ai/chat', (route) => {
       modelCalls += 1;
       return route.fulfill({ status: 500, json: { error: 'no model turns in this test' } });
     });
-    await page.addInitScript(({ instructor }) => {
-      if (!localStorage.getItem('sb-example-auth-token')) {
-        localStorage.setItem('sb-example-auth-token', JSON.stringify({
-          access_token: 'instructor-token', refresh_token: 'refresh', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
-          user: { id: instructor, aud: 'authenticated', role: 'authenticated', email: 'instructor@example.test', app_metadata: {}, user_metadata: {}, created_at: '2026-10-01T00:00:00Z' },
-        }));
-      }
-    }, { instructor: INSTRUCTOR });
 
     // Default theme, no stored choice: applied before first paint.
     await page.goto(`${origin}/`);
@@ -125,7 +177,7 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
 
     // Seat assistant chips fill the input and send nothing.
     const seatChips = page.getByRole('group', { name: 'Example seat requests' }).getByRole('button');
-    assert.deepEqual(await seatChips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class']);
+    assert.deepEqual(await seatChips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class', 'Refund my last seat order']);
     await seatChips.nth(1).click();
     assert.equal(await page.locator('#agent-input').inputValue(), 'Buy 3 seats for the spring class');
     assert.equal(await page.locator('.agent-log').count(), 0, 'a chip fills the input, it does not send');
@@ -175,6 +227,7 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
       const input = page.locator('textarea.ag-studio-ai-assistant-textarea');
       await input.waitFor({ timeout: 60_000 });
       // Judge chips sit under Studio's input, fill it, and send nothing.
+      assert.equal(await input.evaluate((el) => getComputedStyle(el).color), rgb(twins['srgb-foreground']), `${name} Ask AI textarea text`);
       const askChips = page.locator('.ag-studio-ai-assistant-input').getByRole('group', { name: 'Example questions' }).getByRole('button');
       await askChips.first().waitFor({ timeout: 30_000 });
       assert.deepEqual(await askChips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Revenue by class as a column chart', 'Buy 5 seats for the fall class']);
@@ -192,9 +245,58 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     assert.equal(await page.evaluate(() => document.documentElement.style.colorScheme), 'light');
     assert.deepEqual(pageErrors, []);
   } finally {
-    await browser.close();
-    await new Promise((resolve) => listener.close(resolve));
-    await vite.close();
-    globalThis.fetch = originalFetch;
+    await stop();
+  }
+});
+
+test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, and a REFUNDED ledger', { timeout: 180_000 }, async () => {
+  const { page, origin, pageErrors, stop } = await startDashboard();
+  try {
+    await page.goto(`${origin}/`);
+    const counter = page.locator('.seat-counter');
+    await counter.getByText('30 awaiting payment').waitFor({ timeout: 60_000 });
+    assert.match((await counter.innerText()).replace(/\s+/g, ' '), /SEATS REMAINING 23 \/ 30/);
+
+    // The refund chip is shown (the refund endpoint ships) and fills the input.
+    const chips = page.getByRole('group', { name: 'Example seat requests' }).getByRole('button');
+    assert.deepEqual(await chips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class', 'Refund my last seat order']);
+    await chips.nth(2).click();
+    assert.equal(await page.locator('#agent-input').inputValue(), 'Refund my last seat order');
+    assert.equal(calls.nvidia.length, 0);
+
+    // Send: the assistant proposes the most recent paid capture; nothing is refunded yet.
+    await page.getByRole('button', { name: 'Send' }).click();
+    const bar = page.getByRole('group', { name: 'Refund awaiting confirmation' });
+    await bar.waitFor({ timeout: 60_000 });
+    assert.match((await bar.innerText()).replace(/\s+/g, ' '), /Capture CAP-7 · 7 seats · Fall class · USD 343\.00 full refund/);
+    assert.equal(calls.nvidia.length, 2);
+    assert.equal(calls.refunds.length, 0, 'nothing is refunded before Confirm');
+    assert.equal(calls.revokes.length, 0);
+    await page.screenshot({ path: `${SHOTS}refund-confirm.png`, fullPage: true });
+
+    // Confirm: one Captures Refund call for the full amount, seats revoked, ledger updated.
+    await page.getByRole('button', { name: 'Confirm refund' }).click();
+    await page.getByText('Refund REF-CAP-7 issued for USD 343.00. 7 seats for Fall class revoked.').waitFor({ timeout: 30_000 });
+    assert.equal(calls.refunds.length, 1);
+    assert.equal(calls.refunds[0].captureId, 'CAP-7');
+    assert.deepEqual(calls.refunds[0].body.amount, { value: '343.00', currency_code: 'USD' });
+    assert.equal(calls.refunds[0].headers['PayPal-Request-Id'], 'sentinel-refund-CAP-7');
+    assert.deepEqual(calls.revokes.map((call) => [call.p_user_id, call.p_capture_id, call.p_refund_id]), [[INSTRUCTOR, 'CAP-7', 'REF-CAP-7']]);
+    assert.ok(calls.actions.some((row) => row.action === 'refund_proposed'));
+    assert.ok(calls.actions.some((row) => row.action === 'refund_issued'));
+    assert.equal(await bar.count(), 0, 'the Confirm bar closes');
+
+    // The ledger (polled every 3 s) shows the order REFUNDED and its 7 seats back in remaining.
+    await counter.locator('strong').getByText('30', { exact: false }).first().waitFor({ timeout: 30_000 });
+    await page.waitForFunction(() => /SEATS REMAINING\s*30\s*\/\s*30/.test(document.querySelector('.seat-counter')?.innerText ?? ''), null, { timeout: 30_000 });
+    // The grid re-renders a frame after the header, so wait for its pills rather than read once.
+    await page.waitForFunction(() => {
+      const pills = [...document.querySelector('.table-block')?.querySelectorAll('.status-cell') ?? []].map((cell) => cell.textContent).sort();
+      return JSON.stringify(pills) === JSON.stringify(['AWAITING PAYMENT', 'REFUNDED', 'REFUNDED']);
+    }, null, { timeout: 30_000 });
+    await page.screenshot({ path: `${SHOTS}refund-done.png`, fullPage: true });
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await stop();
   }
 });

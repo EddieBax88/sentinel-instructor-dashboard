@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { MAX_SEATS_PER_ORDER } from './config.js';
 import { money } from './seatUnlock.js';
-import { getPaypalOrder, grantSeatAccess, savePaypalOrder } from './supabase.js';
+import { getPaypalOrder, getPaypalOrderByCaptureId, grantSeatAccess, logAgentAction, revokeSeatAccess, savePaypalOrder } from './supabase.js';
 
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
@@ -284,4 +284,70 @@ export async function verifySandboxWebhook(event, headers, rawBody) {
     rawJsonBody: `${verificationMetadata.slice(0, -1)},"webhook_event":${rawEvent}}`,
   });
   return verification.verification_status === 'SUCCESS';
+}
+
+// Refunds one of the signed-in instructor's completed captures in full, through PayPal's Captures
+// Refund API (POST /v2/payments/captures/{capture_id}/refund, Payments v2). Only the Confirm click
+// reaches this: the seat assistant can propose a refund but never issue one. The capture must be
+// the caller's own and still COMPLETED, and the amount is always the recorded capture amount.
+// A fixed PayPal-Request-Id makes a repeated click return the original refund. When PayPal answers
+// COMPLETED the seats are revoked here, so the ledger changes at once; the PAYMENT.CAPTURE.REFUNDED
+// webhook that follows answers alreadyRevoked (server/webhook.js), and if the refund stays PENDING
+// the webhook revokes once PayPal completes it.
+export async function refundSandboxCapture({ captureId, userId }) {
+  if (typeof captureId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(captureId)) {
+    throw Object.assign(new Error('A PayPal capture ID is required.'), { statusCode: 400 });
+  }
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required to refund a capture.'), { statusCode: 401 });
+  }
+  const match = await getPaypalOrderByCaptureId(captureId);
+  if (!match || match.order.user_id !== userId) {
+    await logAgentAction({ userId, action: 'refund_rejected', details: { captureId, reason: match ? 'different account' : 'unknown capture' } });
+    throw Object.assign(new Error('No completed seat order of yours matches this capture.'), { statusCode: match ? 403 : 404 });
+  }
+  const { order, payment } = match;
+  if (payment.status !== 'COMPLETED' || order.status !== 'COMPLETED') {
+    await logAgentAction({ userId, action: 'refund_rejected', details: { captureId, reason: `payment ${payment.status}, order ${order.status}` } });
+    throw Object.assign(new Error('Only a completed, not yet refunded seat order can be refunded.'), { statusCode: 409 });
+  }
+  const amount = money(payment.amount);
+  const currency = payment.currency;
+
+  let refund;
+  try {
+    refund = await paypalFetch(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, {
+      method: 'POST',
+      headers: { 'PayPal-Request-Id': `sentinel-refund-${captureId}`, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        amount: { value: amount, currency_code: currency },
+        note_to_payer: `Refund of ${order.quantity ?? 1} seat(s) for ${order.student_name}`,
+      }),
+    });
+  } catch (error) {
+    await logAgentAction({ userId, action: 'refund_failed', details: { captureId, reason: error.message } });
+    throw error;
+  }
+  if (typeof refund.id !== 'string' || !refund.id) {
+    throw Object.assign(new Error('PayPal sandbox did not return a refund ID.'), { statusCode: 502 });
+  }
+
+  const result = {
+    refundId: refund.id,
+    status: refund.status ?? 'UNKNOWN',
+    captureId,
+    orderId: order.paypal_order_id,
+    amount,
+    currency,
+    quantity: Number(order.quantity ?? 1),
+    className: order.student_name,
+    revoked: false,
+  };
+  await logAgentAction({ userId, action: 'refund_issued', details: { captureId, refundId: refund.id, status: result.status, amount, currency } });
+  if (refund.status === 'COMPLETED') {
+    const outcome = await revokeSeatAccess({ userId, orderId: order.paypal_order_id, captureId, refundId: refund.id, amount, currency });
+    result.revoked = true;
+    result.alreadyRevoked = outcome === 'already_revoked';
+  }
+  return result;
 }

@@ -31,6 +31,16 @@ export const instructorStudioTheme = studioTheme.withParams({
   accentColor: srgb('primary'),
   iconColor: srgb('primary'),
   rowHoverColor: srgb('accent-soft'),
+  // The Ask AI textarea and other inputs: without these Studio's dark defaults made typed text
+  // unreadable on the dark themes.
+  // Follow <html>'s color-scheme (set per theme by applyTheme), so native controls such as the Ask
+  // AI textarea take the right default text colour instead of Studio's fixed light scheme.
+  browserColorScheme: 'inherit',
+  inputTextColor: srgb('foreground'),
+  inputBackgroundColor: srgb('input'),
+  inputPlaceholderTextColor: srgb('muted-foreground'),
+  inputBorder: line('border'),
+  inputFocusBorder: { width: 1, color: srgb('ring') },
 
   studioWrapperBorder: false,
   studioWrapperBorderRadius: 0,

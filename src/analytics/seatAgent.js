@@ -16,16 +16,26 @@ const textOf = (content) => {
 // What the lead receives from the delegation: the assistant's reply, plus a reminder that nothing
 // has been ordered when a proposal is waiting for Confirm.
 export function seatSummary(reply, proposal) {
+  if (proposal?.type === 'refund') return `${reply} The refund is waiting for the instructor to click Confirm above the report; nothing has been refunded.`;
   return proposal
     ? `${reply} The proposal is waiting for the instructor to click Confirm above the report; nothing has been ordered or paid.`
     : reply;
+}
+
+// What the lead sees as the delegation's artifact: the seat order or the refund awaiting Confirm.
+export function proposalArtifact(proposal) {
+  if (!proposal) return [];
+  if (proposal.type === 'refund') {
+    return [{ id: String(proposal.captureId), type: 'refund-proposal', description: `Refund of ${proposal.currency} ${proposal.amount} for ${proposal.quantity} seats (${proposal.className}), awaiting Confirm` }];
+  }
+  return [{ id: String(proposal.id), type: 'seat-proposal', description: `${proposal.quantity} seats for ${proposal.className}, ${proposal.currency} ${proposal.total}, awaiting Confirm` }];
 }
 
 export function createSeatAgent({ getAccessToken, onProposal = () => {}, endpoint = '/api/agent/chat', fetchImpl = (...args) => fetch(...args) }) {
   return {
     id: SEAT_AGENT_ID,
     name: 'Seat agent',
-    description: 'Prices class seats, reports seat availability and the instructor\'s seat orders, and prepares a seat order for the instructor to confirm. Use it for any request to buy, order or price seats. It never places or pays for an order.',
+    description: 'Prices class seats, reports seat availability and the instructor\'s seat orders, prepares a seat order for the instructor to confirm, and proposes a refund of the instructor\'s most recent paid seat order for the instructor to confirm. Use it for any request to buy, order, price or refund seats. It never places, pays for or refunds an order itself.',
     // A custom run: Studio adds no turn loop, so the run brackets and complete_task are emitted here.
     async* run(input, ctx) {
       const { threadId, runId } = input;
@@ -61,9 +71,7 @@ export function createSeatAgent({ getAccessToken, onProposal = () => {}, endpoin
       if (ctx?.completeTask) {
         const toolCallId = `complete-${runId}`;
         const summary = seatSummary(reply, proposal);
-        const artifacts = proposal
-          ? [{ id: String(proposal.id), type: 'seat-proposal', description: `${proposal.quantity} seats for ${proposal.className}, ${proposal.currency} ${proposal.total}, awaiting Confirm` }]
-          : [];
+        const artifacts = proposalArtifact(proposal);
         yield { type: 'TOOL_CALL_START', toolCallId, toolCallName: ctx.completeTask.name ?? 'complete_task' };
         yield { type: 'TOOL_CALL_ARGS', toolCallId, delta: JSON.stringify({ summary, artifacts }) };
         yield { type: 'TOOL_CALL_END', toolCallId };

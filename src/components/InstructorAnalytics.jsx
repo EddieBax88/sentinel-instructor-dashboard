@@ -4,6 +4,7 @@ import { Check, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import PromptChips from './PromptChips.jsx';
+import RefundConfirmBar, { refundIssuedMessage } from './RefundConfirmBar.jsx';
 import { nvidiaStudioAdapter } from '../analytics/nvidiaAdapter.js';
 import { initialReport } from '../analytics/initialReport.js';
 import { createSeatAgent } from '../analytics/seatAgent.js';
@@ -139,6 +140,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
   tokenRef.current = accessToken;
   const { onBusyChange, seconds } = useAssistantProgress();
   const [seatProposal, setSeatProposal] = useState(null);
+  const [refundNotice, setRefundNotice] = useState('');
   const sectionRef = useRef(null);
   const chipHost = useStudioAiInput(sectionRef, mode === 'ask' && assistantAvailable);
 
@@ -189,7 +191,11 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
         )}
       </div>
       {chipHost && createPortal(<PromptChips prompts={ASK_AI_CHIPS} onPick={(text) => fillStudioInput(chipHost, text)} label="Example questions" />, chipHost)}
-      {seatProposal && <SeatConfirmBar key={seatProposal.id} proposal={seatProposal} accessToken={accessToken} onDismiss={() => setSeatProposal(null)} />}
+      {refundNotice && <p className="notice" role="status">{refundNotice}</p>}
+      {seatProposal?.type === 'refund' && (
+        <RefundConfirmBar key={seatProposal.captureId} proposal={seatProposal} authHeaders={() => ({ Authorization: `Bearer ${accessToken}` })} onIssued={(result) => { setSeatProposal(null); setRefundNotice(refundIssuedMessage(result)); }} onDismiss={() => setSeatProposal(null)} />
+      )}
+      {seatProposal && seatProposal.type !== 'refund' && <SeatConfirmBar key={seatProposal.id} proposal={seatProposal} accessToken={accessToken} onDismiss={() => setSeatProposal(null)} />}
       {!error && !data && <div className="grid-empty">Loading your orders…</div>}
       {data && (
         <div className="analytics-canvas">

@@ -1,6 +1,7 @@
 import { Bot, Check, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import PromptChips from './PromptChips.jsx';
+import RefundConfirmBar, { refundIssuedMessage } from './RefundConfirmBar.jsx';
 
 // Renders **bold** spans as <strong>; React escapes the text, and stray asterisks are dropped.
 function formatReply(text) {
@@ -76,6 +77,11 @@ export default function AgentPanel({ authHeaders, available, refundAvailable = f
     }
   }
 
+  function refundIssued(result) {
+    setProposal(null);
+    setMessages((current) => [...current, { role: 'assistant', content: refundIssuedMessage(result) }]);
+  }
+
   return (
     <section className="agent-panel" aria-label="Seat assistant">
       <div className="agent-heading"><Bot size={16} /><strong>Seat assistant</strong><span>Ask in plain English, e.g. "Buy 12 seats for my fall class."</span></div>
@@ -84,7 +90,10 @@ export default function AgentPanel({ authHeaders, available, refundAvailable = f
           {messages.map((message, index) => <li key={index} className={`agent-message ${message.role}`}>{message.role === 'assistant' ? formatReply(message.content) : message.content}</li>)}
         </ol>
       )}
-      {proposal && (
+      {proposal?.type === 'refund' && (
+        <RefundConfirmBar key={proposal.captureId} proposal={proposal} authHeaders={authHeaders} onIssued={refundIssued} onDismiss={() => setProposal(null)} />
+      )}
+      {proposal && proposal.type !== 'refund' && (
         <div className="agent-proposal" role="group" aria-label="Seat order awaiting confirmation">
           <span>{proposal.quantity} seats · {proposal.currency} {proposal.unitPrice} each · <strong>{proposal.currency} {proposal.total} total</strong> · {proposal.className}</span>
           <div>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSeatAgent, SEAT_AGENT_ID, seatSummary } from './seatAgent.js';
+import { createSeatAgent, proposalArtifact, SEAT_AGENT_ID, seatSummary } from './seatAgent.js';
 
 const PROPOSAL = { id: '11111111-1111-4111-8111-111111111111', quantity: 12, className: 'Fall class', unitPrice: '49.00', total: '588.00', currency: 'USD' };
 const REPLY = 'Ready to order 12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.';
@@ -33,7 +33,7 @@ test('a delegated run calls /api/agent/chat with the access token and emits the 
 
   assert.equal(agent.id, SEAT_AGENT_ID);
   assert.equal(agent.name, 'Seat agent');
-  assert.match(agent.description, /never places or pays/i);
+  assert.match(agent.description, /never places, pays for or refunds/i);
   assert.equal(requests[0].url, '/api/agent/chat');
   assert.equal(requests[0].options.method, 'POST');
   assert.equal(requests[0].options.headers.Authorization, 'Bearer session-token');
@@ -87,4 +87,11 @@ test('an aborted run stops without reporting an error', async () => {
   const fetchImpl = async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); };
   const events = await collect(createSeatAgent({ getAccessToken: () => 't', fetchImpl }).run(input(), { signal: controller.signal, completeTask: { name: 'complete_task' } }));
   assert.deepEqual(events.map((event) => event.type), ['RUN_STARTED']);
+});
+
+test('a refund proposal is summarised for the lead as awaiting Confirm, with nothing refunded', () => {
+  const refund = { type: 'refund', captureId: 'CAP-7', orderId: 'ORDER-7', className: 'Fall class', quantity: 7, amount: '343.00', currency: 'USD' };
+  assert.equal(seatSummary('Ready to refund USD 343.00.', refund), 'Ready to refund USD 343.00. The refund is waiting for the instructor to click Confirm above the report; nothing has been refunded.');
+  assert.deepEqual(proposalArtifact(refund), [{ id: 'CAP-7', type: 'refund-proposal', description: 'Refund of USD 343.00 for 7 seats (Fall class), awaiting Confirm' }]);
+  assert.deepEqual(proposalArtifact(null), []);
 });

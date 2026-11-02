@@ -4,22 +4,25 @@ import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
 import { claimSeatProposal, getSeatProposal, listPaypalOrdersForUser, logAgentAction, saveSeatProposal } from './supabase.js';
+import { money } from './seatUnlock.js';
 
 const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_LENGTH = 2000;
 export const OFF_TOPIC_REPLY = 'I can only help with seat pricing, seat availability, and buying cohort seats.';
-const SEAT_TOPIC = /\b(seats?|orders?|ordering|buy|buying|purchas\w*|pric\w*|costs?|totals?|class(es)?|cohorts?|students?|enroll\w*|checkout|paypal|pay|payment|confirm\w*|cancel\w*|availab\w*|quantity|how many)\b/i;
+const SEAT_TOPIC = /\b(seats?|orders?|ordering|buy|buying|purchas\w*|pric\w*|costs?|totals?|class(es)?|cohorts?|students?|enroll\w*|checkout|paypal|pay|payment|confirm\w*|cancel\w*|availab\w*|quantity|how many|refund\w*|money back)\b/i;
 const MAX_FOLLOW_UP_WORDS = 8;
 
 const SYSTEM_PROMPT = `You are the seat-purchasing assistant on the Sentinel instructor dashboard. A signed-in instructor uses you to buy seats in their cohort through PayPal Sandbox.
 
-You can do three things: report seat pricing, report seat availability and the instructor's own seat orders, and prepare a seat order for the instructor to confirm. If a request is about anything else, decline in one sentence and say what you can help with. Do not answer general questions, write other content, or discuss other products.
+You can do four things: report seat pricing, report seat availability and the instructor's own seat orders, prepare a seat order for the instructor to confirm, and propose a refund of the instructor's most recent paid seat order for the instructor to confirm. If a request is about anything else, decline in one sentence and say what you can help with. Do not answer general questions, write other content, or discuss other products.
 
 When the instructor asks to buy seats, call get_seat_pricing and get_current_seats, then call create_seat_order with the quantity and a short class name. If they did not give a quantity, ask for one; you may suggest the default class size from get_current_seats. Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER}.
 
 create_seat_order does not charge anything or create a PayPal order. It prepares a proposal, and nothing is ordered until the instructor clicks Confirm on the dashboard. After it succeeds, state the quantity, unit price, and total from the tool result and tell the instructor to click Confirm to continue to PayPal. Never say an order was placed or paid.
+
+When the instructor asks to refund, cancel or get money back for a paid seat order, call propose_refund. It refunds nothing: it finds the most recent paid (COMPLETED) seat order and prepares a full refund for the instructor to confirm. After it succeeds, state the capture ID, class, seats and amount from the tool result and tell the instructor to click Confirm to issue the refund. If it reports no refundable order, say so. Never say a refund was issued.
 
 Reply in plain text, under 60 words.`;
 
@@ -47,6 +50,11 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'propose_refund',
+    description: "Prepares a full refund of the signed-in instructor's most recent paid (COMPLETED) seat order, for the instructor to confirm. It issues no refund and moves no money.",
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+  },
 ];
 const TOOLS = TOOL_DEFINITIONS.map((definition) => ({ type: 'function', function: definition }));
 
@@ -64,6 +72,27 @@ export function validateSeatRequest({ quantity, class_name: className }) {
 
 function publicProposal({ id, quantity, className, unitPrice, total, currency, expiresAt }) {
   return { id, quantity, className, unitPrice, total, currency, expiresAt: new Date(expiresAt).toISOString() };
+}
+
+// The instructor's most recent paid seat order that still holds its seats: the capture a refund
+// would reverse. Rows come from listPaypalOrdersForUser, so they are the caller's own.
+export function latestRefundableCapture(rows) {
+  const candidates = rows
+    .map((row) => ({ row, payment: Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments }))
+    .filter(({ row, payment }) => row.status === 'COMPLETED' && payment?.capture_id)
+    .sort((a, b) => Date.parse(b.payment.created_at ?? b.row.created_at ?? 0) - Date.parse(a.payment.created_at ?? a.row.created_at ?? 0));
+  const latest = candidates[0];
+  if (!latest) return null;
+  return {
+    type: 'refund',
+    captureId: latest.payment.capture_id,
+    orderId: latest.row.paypal_order_id,
+    className: latest.row.student_name,
+    quantity: Number(latest.row.quantity ?? 1),
+    amount: money(latest.row.amount),
+    currency: latest.row.currency,
+    capturedAt: latest.payment.created_at ?? null,
+  };
 }
 
 export async function executeTool(name, input, { userId }) {
@@ -101,6 +130,18 @@ export async function executeTool(name, input, { userId }) {
     return {
       result: { ...publicProposal(proposal), status: 'AWAITING_INSTRUCTOR_CONFIRMATION' },
       proposal: publicProposal(proposal),
+    };
+  }
+  if (name === 'propose_refund') {
+    const proposal = latestRefundableCapture(await listPaypalOrdersForUser(userId));
+    if (!proposal) {
+      await logAgentAction({ userId, action: 'refund_proposed', details: { captureId: null, reason: 'no refundable order' } });
+      return { result: { refundable: false, reason: 'You have no paid seat order to refund.' } };
+    }
+    await logAgentAction({ userId, action: 'refund_proposed', details: { captureId: proposal.captureId, orderId: proposal.orderId, amount: proposal.amount } });
+    return {
+      result: { ...proposal, refundable: true, status: 'AWAITING_INSTRUCTOR_CONFIRMATION' },
+      proposal,
     };
   }
   throw Object.assign(new Error(`Unknown tool: ${name}`), { statusCode: 400 });
@@ -200,10 +241,12 @@ export async function runAgent({ userId, messages, client = nvidiaClient('the se
     return { reply: OFF_TOPIC_REPLY, proposal: null };
   }
 
-  reply ||= proposal
-    ? `Ready to order ${proposal.quantity} seats at ${proposal.currency} ${proposal.unitPrice} each, ${proposal.currency} ${proposal.total} total. Click Confirm to continue to PayPal.`
-    : 'I could not finish that request. Please try again.';
-  await logAgentAction({ userId, action: 'agent_reply', details: { proposalId: proposal?.id ?? null } });
+  reply ||= proposal?.type === 'refund'
+    ? `Ready to refund ${proposal.currency} ${proposal.amount} for ${proposal.quantity} seats (${proposal.className}, capture ${proposal.captureId}). Click Confirm to issue the refund.`
+    : proposal
+      ? `Ready to order ${proposal.quantity} seats at ${proposal.currency} ${proposal.unitPrice} each, ${proposal.currency} ${proposal.total} total. Click Confirm to continue to PayPal.`
+      : 'I could not finish that request. Please try again.';
+  await logAgentAction({ userId, action: 'agent_reply', details: { proposalId: proposal?.id ?? proposal?.captureId ?? null } });
   return { reply, proposal };
 }
 

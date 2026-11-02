@@ -208,7 +208,7 @@ export default function App() {
           )}
         </section>
         {notice && <p className="notice" role="status">{notice}</p>}
-        {session && <AgentPanel authHeaders={authHeaders} available={dashboard.agentAvailable} />}
+        {session && <AgentPanel authHeaders={authHeaders} available={dashboard.agentAvailable} refundAvailable={dashboard.refundAvailable} />}
 
         <section id="seat-ledger" className="ledger-section">
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>
