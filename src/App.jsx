@@ -176,6 +176,7 @@ export default function App() {
             <p className="eyebrow">FALL 2026 COHORT</p>
             <h1>Make room for <em>what's next.</em></h1>
             <p className="subhead">Seat sales, payment confirmation, and student readiness in one place.</p>
+            <p className="subhead product-line">Each seat unlocks Sentinel's NEC exam prep: the 5-Step Method on the 2026 NEC.</p>
           </div>
           <div className="seat-counter">
             <span>SEATS REMAINING</span>

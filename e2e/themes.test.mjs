@@ -110,6 +110,8 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     const counter = page.locator('.seat-counter');
     await counter.getByText('30 awaiting payment').waitFor({ timeout: 60_000 });
     assert.match((await counter.innerText()).replace(/\s+/g, ' '), /SEATS REMAINING 23 \/ 30 30 awaiting payment/);
+    await page.getByText("Each seat unlocks Sentinel's NEC exam prep: the 5-Step Method on the 2026 NEC.").waitFor();
+    assert.deepEqual(await page.locator('.table-block').first().locator('.ag-header-cell-text').evaluateAll((cells) => cells.map((cell) => cell.textContent)), ['CLASS', 'COHORT', 'SEATS', 'CAPTURE ID', 'AMOUNT', 'PAYMENT STATUS']);
 
     // Status pills in the ledger grid: completed green, awaiting payment amber, refunded red.
     const statusCells = page.locator('.table-block').first().locator('.status-cell');

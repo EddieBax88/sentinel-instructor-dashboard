@@ -30,7 +30,8 @@ function StatusCell({ value }) {
 
 const defaultColDef = { flex: 1, minWidth: 112, sortable: true, resizable: true };
 const transactionColumns = [
-  { field: 'studentName', headerName: 'STUDENT', minWidth: 150 },
+  // studentName holds the class name the order was placed for (class_name in the seat agent).
+  { field: 'studentName', headerName: 'CLASS', minWidth: 150 },
   { field: 'cohortId', headerName: 'COHORT', minWidth: 145 },
   { field: 'quantity', headerName: 'SEATS', minWidth: 80 },
   { field: 'captureId', headerName: 'CAPTURE ID', minWidth: 155, valueFormatter: ({ value }) => value || '—' },
@@ -46,7 +47,7 @@ const quotaColumns = [
   { field: 'seatsRemaining', headerName: 'REMAINING' },
 ];
 const studentColumns = [
-  { field: 'name', headerName: 'STUDENT', minWidth: 150 },
+  { field: 'name', headerName: 'CLASS', minWidth: 150 },
   { field: 'cohort', headerName: 'COHORT', minWidth: 170 },
   { field: 'readiness', headerName: 'READINESS', minWidth: 155, cellRenderer: StatusCell },
 ];
