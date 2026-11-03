@@ -76,7 +76,12 @@ const overview = {
         ],
       },
       sort: [{ field: measure('revenue'), direction: 'desc' }],
-      format: title('Orders by class'),
+      // Studio builds this grid's column defs itself and sizes them with autoSizeAllColumns
+      // (autoSizePadding 0), so a header got exactly its rounded text width and a fraction of a
+      // pixel turned "Seats Pending" into "Seats Pendi…". Report state cannot set minWidth or flex;
+      // headerRow.wrapText is the grid widget's own setting: wrapHeaderText + autoHeaderHeight on
+      // every column, columns sized to their cells, and long headers wrap instead of truncating.
+      format: { ...title('Orders by class'), style: { headerRow: { wrapText: true } } },
     },
   },
   widgetLayout: {

@@ -22,6 +22,11 @@ const gridTheme = themeQuartz.withParams({
   rowHeight: 34,
   wrapperBorder: false,
   wrapperBorderRadius: 0,
+  // domLayout="autoHeight" grows the grid to its rows, but AG Grid's default
+  // autoHeightMinBodyHeight (150px) kept a one-row table 150px tall. No minimum (an empty ledger
+  // shows .grid-empty instead), and past 10 rows the grid stops growing and scrolls.
+  autoHeightMinBodyHeight: 0,
+  autoHeightMaxBodyHeight: 10 * 34,
 });
 
 function StatusCell({ value }) {
@@ -36,7 +41,8 @@ const transactionColumns = [
   { field: 'quantity', headerName: 'SEATS', minWidth: 80 },
   { field: 'captureId', headerName: 'CAPTURE ID', minWidth: 155, valueFormatter: ({ value }) => value || '—' },
   { field: 'amount', headerName: 'AMOUNT', minWidth: 100, valueFormatter: ({ data }) => data ? `${data.currency} ${data.amount}` : '—' },
-  { field: 'status', headerName: 'PAYMENT STATUS', minWidth: 150, cellRenderer: StatusCell },
+  // 180px keeps the widest pill (AWAITING PAYMENT, ~118px) inside the cell's padded content box.
+  { field: 'status', headerName: 'PAYMENT STATUS', minWidth: 180, cellRenderer: StatusCell },
 ];
 const quotaColumns = [
   { field: 'cohort', headerName: 'COHORT', minWidth: 170 },

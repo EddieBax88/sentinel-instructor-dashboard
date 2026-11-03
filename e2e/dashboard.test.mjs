@@ -182,7 +182,7 @@ test('the three themes apply to the dashboard, persist, and re-colour AG Studio 
     assert.deepEqual(await page.locator('.table-block').first().locator('.ag-header-cell-text').evaluateAll((cells) => cells.map((cell) => cell.textContent)), ['CLASS', 'COHORT', 'SEATS', 'CAPTURE ID', 'AMOUNT', 'PAYMENT STATUS']);
     // "fall class" and "Fall class" show as one spelling in the ledger.
     assert.deepEqual((await page.locator('.table-block').first().locator('.ag-cell[col-id="studentName"]').evaluateAll((cells) => cells.map((cell) => cell.textContent))).sort(), ['Fall class', 'Fall class', 'Spring class']);
-    assert.equal(await page.locator('#class-name').getAttribute('placeholder'), 'Class name, e.g. Fall class');
+    assert.equal(await page.locator('#class-name').getAttribute('placeholder'), 'Class name');
 
     // Status pills in the ledger grid: completed green, awaiting payment amber, refunded red.
     const statusCells = page.locator('.table-block').first().locator('.status-cell');

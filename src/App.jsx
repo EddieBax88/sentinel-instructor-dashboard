@@ -5,6 +5,7 @@ import AgentPanel from './components/AgentPanel.jsx';
 import EventDrawer from './components/EventDrawer.jsx';
 import ResetDemoButton from './components/ResetDemoButton.jsx';
 import SeatTable from './components/SeatTable.jsx';
+import { latestClassName } from './components/latestClassName.js';
 import ThemeSwitcher from './components/ThemeSwitcher.jsx';
 
 const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
@@ -30,6 +31,8 @@ export default function App() {
   const [ledgerVersion, setLedgerVersion] = useState(0);
   const [view, setView] = useState(viewFromHash);
   const processedOrder = useRef('');
+  // Set once the instructor types in Card 01, so the 3-second ledger poll never overwrites them.
+  const classNameEdited = useRef(false);
   const accessToken = session?.access_token;
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
   const cancelledCheckout = new URLSearchParams(window.location.search).get('checkout') === 'cancelled';
@@ -134,6 +137,12 @@ export default function App() {
     }
   }
 
+  // Card 01 starts with the class of the newest order in the ledger, or stays empty.
+  const newestClass = latestClassName(dashboard.transactions);
+  useEffect(() => {
+    if (!classNameEdited.current && newestClass) setStudentName(newestClass);
+  }, [newestClass]);
+
   const quota = dashboard.quotas[0];
 
   return (
@@ -144,7 +153,6 @@ export default function App() {
         </a>
         <div className="rail-label">INSTRUCTOR</div>
         <a className={`rail-link${view === 'dashboard' ? ' active' : ''}`} href="#overview">Overview</a>
-        <a className="rail-link" href="#seat-ledger">Seat ledger</a>
         <a className={`rail-link${view === 'analytics' ? ' active' : ''}`} href="#analytics">Instructor analytics</a>
         <div className="rail-bottom"><ShieldCheck size={16} /><span>Sandbox environment</span></div>
         <a className="rail-footer" href="https://www.sentinellearning.com" target="_blank" rel="noopener noreferrer">A Sentinel Learning Inc. product</a>
@@ -190,7 +198,9 @@ export default function App() {
         <section className="checkout-band" aria-label="Sandbox seat checkout">
           <div className="checkout-copy"><span className="checkout-marker">01</span><div><strong>Unlock one cohort seat</strong><span>$49.00 USD · sandbox checkout · capture on approval</span></div></div>
           {!session ? (
-          <form className="checkout-form" onSubmit={signIn}>
+          // Keyed so React mounts fresh inputs when the session arrives: reused, the sign-in email
+          // <input> became the class name <input> and kept a password manager's autofilled email.
+          <form key="sign-in" className="checkout-form" onSubmit={signIn}>
             <label className="sr-only" htmlFor="account-email">Email</label>
             <input id="account-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" autoComplete="email" required />
             <label className="sr-only" htmlFor="account-password">Password</label>
@@ -199,9 +209,9 @@ export default function App() {
             <button className="checkout-button" type="button" onClick={signUp} disabled={busy || !supabase || !email || password.length < 6}>Create account</button>
           </form>
           ) : (
-          <form className="checkout-form" onSubmit={beginCheckout}>
+          <form key="checkout" className="checkout-form" onSubmit={beginCheckout}>
             <label className="sr-only" htmlFor="class-name">Class name</label>
-            <input id="class-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} name="class-name" placeholder="Class name, e.g. Fall class" autoComplete="off" maxLength="80" required />
+            <input id="class-name" value={studentName} onChange={(event) => { classNameEdited.current = true; setStudentName(event.target.value); }} name="class-name" placeholder="Class name" autoComplete="off" maxLength="80" required />
             <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable}>
               {busy ? 'Processing…' : dashboard.paymentAvailable ? 'Buy one seat' : 'Add sandbox credentials'}
               <ArrowUpRight size={16} />
