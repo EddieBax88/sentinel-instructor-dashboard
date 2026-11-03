@@ -2,7 +2,7 @@
 
 Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
-## Repo state (Nov 3, 2026, after the full-screen visual fixes)
+## Repo state (Nov 3, 2026, after the live Ask AI measurements)
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
 - PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. The judged README and LICENSE are the ones on `main` (see SUBMISSION.md checklist).
@@ -16,13 +16,27 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
   - `172a8a8` Submission pack: SUBMISSION.md and the updated DEMO-SCRIPT.md.
   - `96d19ea` HANDOFF after the mission.
   - `8e73d5c` Class names group case-insensitively with one spelling (`fall class` and `Fall class` were splitting by-class charts and grids); Card 01's input is labelled "Class name"; Studio widget-picker icons use currentColor (the last hardcoded colour). Tests 164/164, browser 3/3.
-  - Nov 3, this commit: six visual fixes from a full-screen check of the live deploy (see "Visual fixes, Nov 3" below). Tests 166/166, browser 6/6.
+  - `0f4e071` Six visual fixes from a full-screen check of the live deploy (see "Visual fixes, Nov 3" below). Tests 166/166, browser 6/6.
+  - Nov 3, this commit: the Ask AI model choice recorded from Eddie's live measurements (see "Ask AI live measurements, Nov 3" below); the Ask AI progress line now reads "Most questions take about 15 seconds."; SUBMISSION.md updated. Tests 166/166, browser 6/6.
 - Tests: `npm test` 166/166 (no network calls); `npm run test:browser` 6/6 (the 3 below plus `e2e/layout.test.mjs`: class-name input, layout at 1440/1920 in all three themes, pills at 1024) (headless Chromium: themes and chips; refund chip to Confirm to sandbox refund to REFUNDED ledger to reset; Ask AI lead to Seat agent to Confirm to PayPal). Both browser harnesses now pick a free Vite HMR port, so they run together.
 - Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
 - Migrations applied to the hackathon Supabase project: the first five, plus (per the mission brief) `20261102000000_refunds_and_seat_revoke.sql`.
 - Migration written, NOT applied: `20261103000000_refund_agent_actions.sql` (adds `refund_proposed`, `refund_issued`, `refund_failed`, `refund_rejected`, `demo_reset` to the `agent_actions` check). Until applied, those five actions are not logged (the server warns; the refund and the reset still work).
 - PayPal sandbox webhook: `PAYMENT.CAPTURE.COMPLETED` verified live. `PAYMENT.CAPTURE.REFUNDED` still not on the subscription (owner decision 2). The Confirm-gated refund revokes seats itself when PayPal answers COMPLETED, so the demo works without it; the drawer's "Payment refunded" entry needs it.
+
+## Ask AI live measurements, Nov 3
+
+Measured by Eddie on production from the `STUDIO_AI_TIMING` log rows. Effort `low` for both models.
+
+| Model | Request | Model turns | Failed tool calls | Per turn | End to end | Result |
+|---|---|---|---|---|---|---|
+| `claude-sonnet-5-5` | "Add a column chart of revenue by class." | 7 | 0 | 0.8 to 2.5 s | about 15 s | Chart rendered correctly (Fall class, $294). |
+| `claude-sonnet-5-5` | "Buy 5 seats for the fall class" | not recorded | not recorded | not recorded | about 14 s, roughly 10 s of it the NVIDIA seat assistant | The lead delegated to the Seat agent with `delegate_to`; the Confirm bar showed 5 seats, Fall class, USD 245.00 total; the lead's final reply said nothing was ordered or paid until Confirm. |
+| `claude-haiku-5-5` | "Add a column chart of revenue by class." | 9 | 2 | not recorded | about 15 s | Recovered and rendered. Failures: a `delegate_to` with no target agent (the empty "Delegated to" row showed red in the UI) and a `configure_widget` "Expected an object" error. |
+
+- **Decision:** Sonnet 5.5 at effort `low` (`server/config.js`). Effort `medium` was not tested, because `low` already had 0 failed tool calls.
+- `STUDIO_AI_MODEL` has been removed from Vercel, so production uses the code default.
 
 ## Visual fixes, Nov 3 (root causes)
 
@@ -45,7 +59,7 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 8. **Logo** (unchanged): no asset in the repo; the sidebar keeps the GraduationCap mark.
 9. **Theme defaults.** Black & Safety-Yellow is the default as briefed. The Light theme keeps `--primary-strong` for buttons and small text (AA); the dark themes use the raw primary everywhere because it already clears AA on their surfaces. The Industrial `--accent-soft` tint was darkened to `oklch(25% .035 45)` to keep primary text on it at 4.5:1.
 10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged).
-11. **Anthropic key (~Nov 2) and AG Studio trial license (~Nov 5)**: unchanged from the previous handoff.
+11. **Anthropic key: done** (in Vercel Production; Ask AI measured live Nov 3). **AG Studio trial license (~Nov 5)**: unchanged from the previous handoff.
 
 ## Hard rules
 
@@ -67,13 +81,14 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 - Brand theme (`f4d2ae6`), checked in headless Chromium against stubbed data: Inter and Fraunces load, the Class fill widget renders grouped rows from Studio (`Spring class 30 / 30`, `Fall class 12 / 30`), the Revenue and Seat progress tiles render, charts use the brand palette, the footer link opens www.sentinellearning.com in a new tab, no page errors. The live site serves the new theme (checked after deploy).
 - Refund handling (`08e06b2`): 10 webhook tests against fakes (full refund revokes once; retry answers already revoked; refunding the last completed order deactivates access; partial, other-currency, missing-amount, pending, unknown-capture and no-link refunds change nothing; bad signature records nothing; Supabase failure answers 502). NOT yet verified live (migration and webhook event pending).
 - Instructor analytics (AG Studio): KPIs, charts, Class fill, by-class grid, custom widgets, theme.
+- Ask AI on Claude (Nov 3, production): Sonnet 5.5 at effort `low` built a revenue-by-class column chart through Studio's tools in 7 turns with 0 failed tool calls; the `STUDIO_AI_TIMING` rows are logged. See "Ask AI live measurements, Nov 3".
+- Studio lead hands seat requests to the Seat agent (Nov 3, production, live Claude lead): `delegate_to` the Seat agent, Confirm bar with 5 seats, Fall class, USD 245.00 total; the lead's reply says nothing is ordered or paid until Confirm.
 - Earlier probe results and Ask AI timings on NVIDIA are unchanged from the previous handoff (Ultra 10/10 valid tool calls, median 4.9 s; Nemotron 3.5 Super VL 10/10, 11.0 s; Nemotron 3 Super 404 on the free endpoint).
 
 ## Not yet verified live
 
 - Refund to seat revoke (see Owner decisions 1 and 2).
-- Seat agent in Ask AI through a live Claude lead (needs the Anthropic key). The headless test uses a scripted lead.
-- Ask AI on Claude (built against fakes, no live key yet): proxy translation, streaming with 10 s first-content retry, refusal as a clean 422, timing rows, probe settings. Default model `claude-sonnet-5-5`, effort `low` (`server/config.js`) is a placeholder until the live probe.
+- Ask AI on Claude: the 10 s first-content retry and a refusal as a clean 422 are tested against fakes only; the Nov 3 runs did not report either.
 - `npm run time:ask-ai` (headless harness) hung on Eddie's machine before the 5-minute timeout was added; not debugged. Still times the NVIDIA path.
 
 ## Things that looked worse or need a second look
@@ -131,19 +146,20 @@ Question: can `@paypal/agent-toolkit` be used for ONLY a refund tool without tou
 
 ### Decision: strict tools off (Eddie, 2026-10-31)
 
-Tools are sent without `strict: true`. The live probe (Nov 2) measures tool-call validity per model; revisit strict only if it shows malformed calls. `npm run check:strict-tools` shows 6 of 21 captured Studio tools fail Anthropic's strict rules (recursive `$defs`, `not: {}`, `minItems`/`maxItems`, `minimum`) and the data, widget and page agents exceed the optional-param and union-param limits.
+Tools are sent without `strict: true`. Live on Nov 3, the chosen model (Sonnet 5.5) made 0 failed tool calls, so this stands. `npm run check:strict-tools` shows 6 of 21 captured Studio tools fail Anthropic's strict rules (recursive `$defs`, `not: {}`, `minItems`/`maxItems`, `minimum`) and the data, widget and page agents exceed the optional-param and union-param limits.
 
 ## Vercel deploy (live)
 
 - `server/app.js`: the Express app, all `/api` routes. `server/index.js` adds the client and listens, for local use. `api/index.js`: the single Vercel Function; `vercel.json` rewrites `/api/:route*` to `/api?__route=:route*` and everything else to `/index.html`.
 - Webhook raw body: `NODEJS_HELPERS=0` on Vercel so PayPal's postback verification gets the bytes as received.
-- Env vars (Production, set): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`*, `PAYPAL_CLIENT_ID`*, `PAYPAL_SECRET`*, `PAYPAL_WEBHOOK_ID`*, `PAYPAL_BASE_URL`, `APP_BASE_URL`, `ANTHROPIC_API_KEY`* (pending), `NVIDIA_API_KEY`*, `NODEJS_HELPERS=0`; optional `STUDIO_AI_MODEL`, `STUDIO_AI_TIMING=1`. * = Secret. `.env.example` documents all of them.
+- Env vars (Production, set): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`*, `PAYPAL_CLIENT_ID`*, `PAYPAL_SECRET`*, `PAYPAL_WEBHOOK_ID`*, `PAYPAL_BASE_URL`, `APP_BASE_URL`, `ANTHROPIC_API_KEY`*, `NVIDIA_API_KEY`*, `NODEJS_HELPERS=0`; optional `STUDIO_AI_TIMING=1`. `STUDIO_AI_MODEL` was removed on Nov 3, so production uses the code default in `server/config.js`. * = Secret. `.env.example` documents all of them.
 
 ## Remaining (in order)
 
-1. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
-2. Record the video from `DEMO-SCRIPT.md` (the Ask AI steps need the Anthropic key).
-3. Live probe on Claude when the key arrives; pick model and effort.
+Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`).
+
+1. Devpost draft (Nov 5): paste the fields from `SUBMISSION.md` and run its Nov 5 early check.
+2. Record the video from `DEMO-SCRIPT.md` (the Anthropic key is live, so the Ask AI steps can be recorded).
+3. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
 4. AG Studio trial license (~Nov 5).
-5. Nov 5 early check from `SUBMISSION.md`.
-6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
+5. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).

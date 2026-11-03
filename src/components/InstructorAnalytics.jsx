@@ -34,7 +34,7 @@ const PANELS = {
 // that short gap instead of flickering off and on.
 const IDLE_GRACE_MS = 1500;
 
-// Visible while the assistant works: a question takes several model turns, often 10 to 25 seconds.
+// Visible while the assistant works: a question takes several model turns, about 15 seconds live (Nov 3).
 function useAssistantProgress() {
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(() => Date.now());
@@ -186,7 +186,7 @@ export default function InstructorAnalytics({ accessToken, assistantAvailable, s
           <>
             <span className="ai-progress-spinner" aria-hidden="true" />
             <strong>Analytics assistant is working… {seconds}s</strong>
-            <span>Questions can take 10 to 25 seconds.</span>
+            <span>Most questions take about 15 seconds.</span>
           </>
         )}
       </div>

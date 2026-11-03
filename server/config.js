@@ -13,8 +13,9 @@ export const AGENT_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 export const AGENT_TEMPLATE_KWARGS = { enable_thinking: true, force_nonempty_content: true };
 
 // The AG Studio analytics agent (Ask AI) runs on Anthropic Claude through the Messages API.
-// STUDIO_AI_MODEL in .env overrides the model without a code change. The default is a placeholder
-// until `npm run probe:studio-agent` has compared models and effort levels live.
+// STUDIO_AI_MODEL in .env overrides the model without a code change (production does not set it).
+// Sonnet 5.5 at effort low was measured live on Nov 3: 0 failed tool calls, where Haiku 5.5 had 2.
+// Timings and the comparison are in HANDOFF.md.
 export const STUDIO_AI_DEFAULT_MODEL = 'claude-sonnet-5-5';
 export const studioAiModel = () => process.env.STUDIO_AI_MODEL || STUDIO_AI_DEFAULT_MODEL;
 // Thinking stays on (the model's default); effort sets how much it thinks per turn.

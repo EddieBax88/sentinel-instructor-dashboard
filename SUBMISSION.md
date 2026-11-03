@@ -30,13 +30,12 @@ An instructor signs in, asks for seats in plain English ("Buy 12 seats for my fa
 ### How AG Studio is used
 
 - **Instructor analytics is an AG Studio report** over the signed-in instructor's own orders: revenue and seat KPIs, seats ordered by day, order value and revenue by day, a by-class grid, and three custom widgets (Revenue tile, Seat progress, Class fill).
-- **A custom Seat agent sits beside Studio's built-in agents.** Studio's lead agent hands any seat request ("Buy 5 seats for the fall class") to it with `delegate_to`; the Seat agent calls the dashboard's seat assistant, shows the reply in the Ask AI chat, places the proposal in a Confirm bar above the report, and reports back with `complete_task`. Ask AI runs through a sign-in-only server proxy that holds the model key and refuses any non-Studio tool.
+- **A custom Seat agent sits beside Studio's built-in agents.** Studio's lead agent hands any seat request ("Buy 5 seats for the fall class") to it with `delegate_to`; the Seat agent calls the dashboard's seat assistant, shows the reply in the Ask AI chat, places the proposal in a Confirm bar above the report, and reports back with `complete_task`. Ask AI runs through a sign-in-only server proxy that holds the model key and refuses any non-Studio tool. Ask AI runs on Claude Sonnet 5.5, chosen after a live comparison with Claude Haiku 5.5 on tool-call validity.
 - **Three themes, one source of truth.** Black & Safety-Yellow (default), Industrial and Light mirror sentinellearning.com's oklch token sets. A 3-segment switcher in the top bar persists the choice and an inline script applies it before first paint. Studio follows the switch live: its style sensor sees the foreground and background change and re-themes every widget and chart.
 - **A finding worth sharing.** AG Studio resolves theme colours in JavaScript and converts only `rgb()` and `color(srgb)` values for AG Charts and for its widget, canvas and grid backgrounds. With oklch tokens those fell back to Studio's defaults. The dashboard generates sRGB hex twins of every colour token per theme (`src/theme/themes.js`, `scripts/build-theme-css.mjs`) and points the Studio theme at those. Unit tests enforce WCAG AA contrast for every text pair in all three themes, and a headless Chromium test samples the chart canvas to prove each theme's palette is drawn.
 
 ### What's next
 
-- Live Ask AI on the production key and a model and effort choice from the probe script.
 - Class rosters: seats assigned to named students, with readiness pulled from the exam-prep product.
 - Instructor invoices through PayPal Invoicing for schools that pay by purchase order.
 
@@ -57,6 +56,6 @@ An instructor signs in, asks for seats in plain English ("Buy 12 seats for my fa
 - [ ] **.env.example complete.** Every variable the server reads is listed: `PORT`, `APP_BASE_URL`, `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_BASE_URL`, `PAYPAL_WEBHOOK_ID`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NVIDIA_API_KEY`, `ANTHROPIC_API_KEY`, `STUDIO_AI_MODEL`, `STUDIO_AI_TIMING`, plus `NODEJS_HELPERS` (Vercel) and `VERCEL_GIT_COMMIT_SHA` (set by Vercel) as comments. Re-check with: `grep -rhoE "process\.env\.[A-Z_]+" server api scripts src | sort -u`.
 - [ ] **No secrets in the tree or history.** Run `git grep -nE "(sk-ant-|sk-live|AIza|-----BEGIN|nvapi-|eyJhbGciOi)" -- . ':!package-lock.json'` on the branch; the only hit must be the fake test key `sk-ant-test-key-that-must-never-reach-the-browser` in `server/studioAi.test.js` and `e2e/dashboard.test.mjs`. `.env` is gitignored and was never committed (`git log --all -- .env` is empty).
 - [ ] **Hosted demo answers.** `curl https://sentinel-hackathon-demo-mu.vercel.app/api/health` returns `{"status":"ok","environment":"sandbox-only","commit":"<sha of the deployed commit>"}`.
-- [ ] **Tests green on a clean clone.** `npm ci && npm test && npm run test:browser` (162 unit tests, 3 browser tests at the time of writing).
+- [ ] **Tests green on a clean clone.** `npm ci && npm test && npm run test:browser` (166 unit tests, 6 browser tests as of Nov 3).
 - [ ] **Video under 3 minutes**, recorded from DEMO-SCRIPT.md, uploaded, link pasted above.
 - [ ] **Owner decisions in HANDOFF.md resolved** or consciously deferred: refund migration applied, `PAYMENT.CAPTURE.REFUNDED` on the webhook subscription, the agent-actions migration applied, judge test account.
