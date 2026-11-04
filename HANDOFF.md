@@ -33,6 +33,14 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 - **Tests.** `server/agent.test.js` uses a `messages.create` fake (Messages-shaped replies with thinking blocks; a `stall` entry waits for the call's AbortSignal). New: "Buy 12 seats for my fall class" to a stored proposal with no thinking in the reply; "Refund my last seat order" to a refund proposal; a stalled call ends as 504 at the per-call deadline; the request budget caps later calls; no PayPal call ever happens from the agent. `server/studioAi.test.js`: a streaming turn cut off at the hard deadline is a 504 and not retried; stalled first try plus stalled retry end at the deadline; the proxy answers 504 JSON. The browser tests fake `api.anthropic.com/v1/messages` instead of NVIDIA. Totals: `npm test` 173/173, `npm run test:browser` 6/6.
 - **Live check** (this session, production, headless Chromium): see "Live check, Nov 4" below.
 
+## Live check, Nov 4 (production, deploy of `b2c41fb`, headless Chromium)
+
+- `GET /api/health` reported `b2c41fb6bd75a3178bbc1c135c002f7e13a82a51` about 40 s after the push.
+- A new test account was created with "Create account" (the earlier test account's password was not on record): `hackathon-live-check-nov4@example.com`. **Eddie removes both test users** (Supabase Auth > Users in the hackathon project; the other is `hackathon-signup-test@example.com`).
+- **Overview seat assistant:** chip "Buy 12 seats for my fall class" filled the input; Send to the proposal "12 seats · USD 49.00 each · USD 588.00 total · Fall class" with a Confirm button in **6.4 s** (`POST /api/agent/chat` answered 200 once). Reply: "Your order is ready for you to confirm: 12 seats for "Fall class" at 49.00 USD each, for a total of 588.00 USD. Nothing has been ordered or charged yet. Click Confirm to continue to PayPal." Confirm was not clicked. Screenshot `seat-assistant-proposal.png` (session scratchpad, not in the repo).
+- **Instructor analytics, Ask AI:** chip "Buy 5 seats for the fall class"; send to the Confirm bar above the report "Seat agent prepared an order · 5 seats · Fall class · USD 49.00 each · USD 245.00 total" with "Confirm and pay with PayPal" in **9.4 s** (two lead turns through `/api/studio-ai/chat` and one `/api/agent/chat`, all 200). The lead delegated to the Seat agent and its final reply said nothing is ordered or charged until Confirm. Confirm was not clicked. Screenshot `ask-ai-confirm-bar.png`. No page errors in either step.
+- Both proposals were left to expire (10 minutes); nothing was ordered, paid or refunded.
+
 ## Judge sign-up test, Nov 4 (live site, headless Chromium)
 
 - **Sign-up works with no email step.** `hackathon-signup-test@example.com` + an 8+ character password, "Create account": notice "Account created and signed in.", the checkout form swapped to the Class name input, the Seat assistant appeared, ledger empty (`No seat orders yet.`, 0 rows, Class seats 30 / 30). Signing in again with the same account also works. **Eddie removes this test user** (Supabase Auth > Users in the hackathon project).
@@ -182,7 +190,7 @@ Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort 
 
 1. **Seat assistant on the live site:** done on Claude (Nov 4, "Live check, Nov 4"). Optional: one look from Eddie's own browser before recording.
 2. Record the video from `DEMO-SCRIPT.md`, upload, paste the link into `SUBMISSION.md`.
-3. Delete the test user `hackathon-signup-test@example.com` and the leftover branch `ccr-90064225-vddchi` (owner decision 10).
+3. Delete the test users `hackathon-signup-test@example.com` and `hackathon-live-check-nov4@example.com`, and the leftover branch `ccr-90064225-vddchi` (owner decision 10).
 4. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
 5. AG Studio trial license (~Nov 5).
 6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
