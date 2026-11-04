@@ -59,7 +59,7 @@ async function startDashboard() {
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     PAYPAL_CLIENT_ID: 'sandbox_test_client',
     PAYPAL_SECRET: 'sandbox_test_secret',
-    NVIDIA_API_KEY: 'test-nvidia-key',
+    ANTHROPIC_API_KEY: 'test-anthropic-key',
   });
   delete process.env.PAYPAL_BASE_URL;
   globalThis.fetch = fakeFetch;

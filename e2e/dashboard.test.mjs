@@ -1,5 +1,5 @@
 // Headless browser tests of the real dashboard (src/App.jsx) against the real Express app, with
-// Supabase, NVIDIA and PayPal Sandbox faked on the server and a seeded browser session.
+// Supabase, the Anthropic Messages API and PayPal Sandbox faked on the server and a seeded browser session.
 // 1. Themes: the seat header, status pills, judge chips, the switch (persisted in localStorage,
 //    applied before first paint), and AG Studio following the theme: the active theme's chart-1 hex
 //    must appear on the chart canvas and the previous theme's must not.
@@ -41,11 +41,13 @@ const ORDERS = [
   { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
 ];
 
-const calls = { nvidia: [], refunds: [], revokes: [], actions: [], deletes: [] };
-// The seat assistant's model, scripted: a refund request becomes a propose_refund call, then a reply.
-const nvidiaReplies = [
-  { choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'nv-1', type: 'function', function: { name: 'propose_refund', arguments: '{}' } }] } }] },
-  { choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'I can refund USD 343.00 for the 7 Fall class seats (capture CAP-7). Click Confirm to issue the refund.' } }] },
+const calls = { claude: [], refunds: [], revokes: [], actions: [], deletes: [] };
+// The seat assistant's model (Claude, Messages API), scripted: a refund request becomes a
+// propose_refund call, then a reply.
+const claudeMessage = (content, stopReason) => ({ id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content, stop_reason: stopReason, usage: { input_tokens: 100, output_tokens: 20 } });
+const claudeReplies = [
+  claudeMessage([{ type: 'tool_use', id: 'toolu_1', name: 'propose_refund', input: {} }], 'tool_use'),
+  claudeMessage([{ type: 'text', text: 'I can refund USD 343.00 for the 7 Fall class seats (capture CAP-7). Click Confirm to issue the refund.' }], 'end_turn'),
 ];
 
 async function fakeFetch(url, options = {}) {
@@ -83,10 +85,10 @@ async function fakeFetch(url, options = {}) {
       return Response.json('revoked');
     }
   }
-  if (hostname === 'integrate.api.nvidia.com' && pathname === '/v1/chat/completions') {
-    calls.nvidia.push(JSON.parse(options.body));
-    const reply = nvidiaReplies.shift();
-    if (!reply) throw new Error('No scripted NVIDIA reply left');
+  if (hostname === 'api.anthropic.com' && pathname === '/v1/messages') {
+    calls.claude.push(JSON.parse(options.body));
+    const reply = claudeReplies.shift();
+    if (!reply) throw new Error('No scripted Claude reply left');
     return Response.json(reply);
   }
   if (hostname === 'api-m.sandbox.paypal.com') {
@@ -108,7 +110,6 @@ async function startDashboard() {
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     PAYPAL_CLIENT_ID: 'sandbox_test_client',
     PAYPAL_SECRET: 'sandbox_test_secret',
-    NVIDIA_API_KEY: 'test-nvidia-key',
     ANTHROPIC_API_KEY: 'sk-ant-test-key-that-must-never-reach-the-browser',
   });
   delete process.env.PAYPAL_BASE_URL;
@@ -283,14 +284,14 @@ test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, a
     assert.deepEqual(await chips.evaluateAll((buttons) => buttons.map((button) => button.textContent)), ['Buy 12 seats for my fall class', 'Buy 3 seats for the spring class', 'Refund my last seat order']);
     await chips.nth(2).click();
     assert.equal(await page.locator('#agent-input').inputValue(), 'Refund my last seat order');
-    assert.equal(calls.nvidia.length, 0);
+    assert.equal(calls.claude.length, 0);
 
     // Send: the assistant proposes the most recent paid capture; nothing is refunded yet.
     await page.getByRole('button', { name: 'Send' }).click();
     const bar = page.getByRole('group', { name: 'Refund awaiting confirmation' });
     await bar.waitFor({ timeout: 60_000 });
     assert.match((await bar.innerText()).replace(/\s+/g, ' '), /Capture CAP-7 · 7 seats · Fall class · USD 343\.00 full refund/);
-    assert.equal(calls.nvidia.length, 2);
+    assert.equal(calls.claude.length, 2);
     assert.equal(calls.refunds.length, 0, 'nothing is refunded before Confirm');
     assert.equal(calls.revokes.length, 0);
     await page.screenshot({ path: `${SHOTS}refund-confirm.png`, fullPage: true });

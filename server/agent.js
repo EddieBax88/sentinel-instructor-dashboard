@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS, MAX_SEATS_PER_ORDER } from './config.js';
-import { isNvidiaConfigured, nvidiaClient, replyText } from './nvidia.js';
+import { AGENT_REQUEST_BUDGET_MS, MAX_SEATS_PER_ORDER, MODEL_CALL_TIMEOUT_MS, STUDIO_AI_EFFORT, studioAiModel } from './config.js';
+import { anthropicClient, isAnthropicConfigured } from './anthropic.js';
 import { assertSeatQuantity, createSandboxOrder, SEAT_PRICING, seatOrderTotal } from './paypal.js';
 import { COHORT, dashboardFromOrders } from './seatUnlock.js';
 import { claimSeatProposal, getSeatProposal, listPaypalOrdersForUser, logAgentAction, saveSeatProposal } from './supabase.js';
@@ -10,7 +10,10 @@ const PROPOSAL_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 6;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_LENGTH = 2000;
+// Replies are under 60 words; the cap leaves room for low-effort thinking and the tool calls.
+const MAX_OUTPUT_TOKENS = 4096;
 export const OFF_TOPIC_REPLY = 'I can only help with seat pricing, seat availability, and buying cohort seats.';
+export const TIMEOUT_REPLY = 'The seat assistant took too long. Please try again.';
 const SEAT_TOPIC = /\b(seats?|orders?|ordering|buy|buying|purchas\w*|pric\w*|costs?|totals?|class(es)?|cohorts?|students?|enroll\w*|checkout|paypal|pay|payment|confirm\w*|cancel\w*|availab\w*|quantity|how many|refund\w*|money back)\b/i;
 const MAX_FOLLOW_UP_WORDS = 8;
 
@@ -56,10 +59,22 @@ const TOOL_DEFINITIONS = [
     parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   },
 ];
-const TOOLS = TOOL_DEFINITIONS.map((definition) => ({ type: 'function', function: definition }));
+// The same four tools as Anthropic tool definitions. None of them reaches PayPal: the only PayPal
+// calls are behind the instructor's Confirm (confirmProposal below, and the refund endpoint).
+const TOOLS = TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({ name, description, input_schema: parameters }));
 
-export const isAgentConfigured = isNvidiaConfigured;
-export { replyText };
+export const isAgentConfigured = isAnthropicConfigured;
+
+// Only text blocks become reply text. Thinking blocks (thinking, redacted_thinking) and tool_use
+// blocks are never read into the reply.
+export function replyText(content) {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('')
+    .trim();
+}
 
 export function validateSeatRequest({ quantity, class_name: className }) {
   assertSeatQuantity(quantity);
@@ -175,66 +190,86 @@ export function isSeatRequest(messages) {
     && latest.trim().split(/\s+/).length <= MAX_FOLLOW_UP_WORDS;
 }
 
-function parseToolArguments(text) {
-  try {
-    const input = JSON.parse(text || '{}');
-    if (input && typeof input === 'object' && !Array.isArray(input)) return input;
-  } catch {
-    // fall through
-  }
+// The Messages API delivers tool input as a parsed value; anything but a plain object is rejected.
+function parseToolInput(input) {
+  if (input && typeof input === 'object' && !Array.isArray(input)) return input;
   throw Object.assign(new Error('Tool arguments must be a JSON object.'), { statusCode: 400 });
 }
 
-// History arrives as text-only turns; inside one request the loop appends each
-// assistant message unchanged, as the model's chat template expects.
-export async function runAgent({ userId, messages, client = nvidiaClient('the seat assistant') }) {
+const timeoutError = () => Object.assign(new Error(TIMEOUT_REPLY), { statusCode: 504 });
+
+// One Messages API call under a hard deadline. The AbortSignal covers the whole call, including
+// a response that starts and then stalls; `timeout` is the SDK's own bound on the same call. A
+// deadline that passes ends the request as a 504, never a hang.
+async function createMessage(client, request, deadlineMs) {
+  if (deadlineMs <= 0) throw timeoutError();
+  // A plain timer, not AbortSignal.timeout(): that one does not keep the event loop alive.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
+  try {
+    return await client.messages.create(request, { signal: controller.signal, timeout: deadlineMs });
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'APIConnectionTimeoutError') throw timeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// History arrives as text-only turns. Inside one request the loop appends each assistant message
+// unchanged (thinking blocks included, as the Messages API requires on tool use) and answers every
+// tool_use block in one user message of tool_result blocks. Model calls share one time budget per
+// request, each capped on its own, so the whole request ends well inside a minute.
+export async function runAgent({ userId, messages, client = anthropicClient('the seat assistant'), budgetMs = AGENT_REQUEST_BUDGET_MS, callTimeoutMs = MODEL_CALL_TIMEOUT_MS }) {
   const history = validateMessages(messages);
   const onTopic = isSeatRequest(history);
-  const conversation = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
+  const conversation = history.map(({ role, content }) => ({ role, content }));
+  const deadline = Date.now() + budgetMs;
   await logAgentAction({ userId, action: 'chat_request', details: { message: history.at(-1).content.slice(0, 500) } });
 
   let proposal = null;
   let reply = '';
   let usedTools = false;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const response = await client.chat.completions.create({
-      model: AGENT_MODEL,
+    const response = await createMessage(client, {
+      model: studioAiModel(),
+      max_tokens: MAX_OUTPUT_TOKENS,
+      system: SYSTEM_PROMPT,
       messages: conversation,
       tools: TOOLS,
-      tool_choice: 'auto',
-      max_tokens: 16384,
-      temperature: 1,
-      top_p: 0.95,
-      chat_template_kwargs: AGENT_TEMPLATE_KWARGS,
-    });
+      tool_choice: { type: 'auto' },
+      output_config: { effort: STUDIO_AI_EFFORT },
+    }, Math.min(callTimeoutMs, deadline - Date.now()));
 
-    const message = response.choices?.[0]?.message;
-    if (!message || message.refusal) {
+    if (!response || response.stop_reason === 'refusal') {
       reply = OFF_TOPIC_REPLY;
       break;
     }
-    const toolCalls = (message.tool_calls ?? []).filter((call) => call.type === 'function');
-    if (toolCalls.length === 0) {
-      reply = replyText(message.content);
+    const content = Array.isArray(response.content) ? response.content : [];
+    const toolUses = content.filter((block) => block?.type === 'tool_use');
+    if (toolUses.length === 0) {
+      reply = replyText(content);
       break;
     }
 
     usedTools = true;
-    conversation.push(message);
-    for (const toolCall of toolCalls) {
-      const { name } = toolCall.function;
-      let input = toolCall.function.arguments;
+    conversation.push({ role: 'assistant', content });
+    const results = [];
+    for (const toolUse of toolUses) {
+      const { name } = toolUse;
+      let input = toolUse.input;
       try {
-        input = parseToolArguments(toolCall.function.arguments);
+        input = parseToolInput(toolUse.input);
         const outcome = await executeTool(name, input, { userId });
         if (outcome.proposal) proposal = outcome.proposal;
         await logAgentAction({ userId, action: 'tool_call', details: { tool: name, input } });
-        conversation.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify(outcome.result) });
+        results.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(outcome.result) });
       } catch (error) {
         await logAgentAction({ userId, action: 'tool_rejected', details: { tool: name, input, reason: error.message } });
-        conversation.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify({ error: error.message }) });
+        results.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ error: error.message }), is_error: true });
       }
     }
+    conversation.push({ role: 'user', content: results });
   }
 
   if (!usedTools && !onTopic) {

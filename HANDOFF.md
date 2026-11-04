@@ -2,10 +2,12 @@
 
 Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
-## Repo state (Nov 3, 2026, after the live Ask AI measurements)
+## Repo state (Nov 4, 2026, after the seat assistant moved to Claude)
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
-- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. The judged README and LICENSE are the ones on `main` (see SUBMISSION.md checklist).
+- **PR #1 is merged** (Nov 4, merge commit `94e634d`, a merge commit, not a squash, on Eddie's instruction). `main` now carries the full branch; `LICENSE` (MIT) is at its root and the GitHub API reports the repo license as `MIT`. The branch was kept: Vercel Production still deploys from it. Any further work goes on the branch and needs a new PR into `main`.
+- **Devpost draft: complete except the video.** `SUBMISSION.md` holds every field; `DEMO-SCRIPT.md` is the click path.
+- **cloudflared.deb and the old names stay in git history by decision** (Nov 4): no history rewrite, no force-push.
 - Commits this session, oldest first (each pushed, deployed READY, health `ok` with that commit):
   - `f1333e0` Seat math: pending orders no longer reduce the seats remaining; header pill "N awaiting payment"; `/api/health` reports the commit.
   - `a863f9e` Triple theme: Black & Safety-Yellow (default), Industrial, Light; Studio re-themed through sRGB twins; AA contrast tests; browser test.
@@ -17,7 +19,33 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
   - `96d19ea` HANDOFF after the mission.
   - `8e73d5c` Class names group case-insensitively with one spelling (`fall class` and `Fall class` were splitting by-class charts and grids); Card 01's input is labelled "Class name"; Studio widget-picker icons use currentColor (the last hardcoded colour). Tests 164/164, browser 3/3.
   - `0f4e071` Six visual fixes from a full-screen check of the live deploy (see "Visual fixes, Nov 3" below). Tests 166/166, browser 6/6.
-  - Nov 3, this commit: the Ask AI model choice recorded from Eddie's live measurements (see "Ask AI live measurements, Nov 3" below); the Ask AI progress line now reads "Most questions take about 15 seconds."; SUBMISSION.md updated. Tests 166/166, browser 6/6.
+  - `dd21d87` The Ask AI model choice recorded from Eddie's live measurements (see "Ask AI live measurements, Nov 3" below); the Ask AI progress line now reads "Most questions take about 15 seconds."; SUBMISSION.md updated. Tests 166/166, browser 6/6.
+  - `ea9353c` Pre-video cleanup (Nov 4): DEMO-SCRIPT.md says "in about 15 seconds"; README gained "How PayPal is used" (Orders v2, Payments v2, verified webhooks), names Claude Sonnet 5.5 for Ask AI and AG Grid / AG Charts / AG Studio together, and covers the Confirm-gated refund. README has no retired product names. Secret scan clean (only the fake test key and the docs that quote the pattern); `git log --all -- .env` empty. Tests 166/166, browser 6/6.
+  - `67bfcd3` HANDOFF after the cleanup and the judge sign-up test (below).
+  - Nov 4, this commit: **the seat assistant runs on Claude Sonnet 5.5 with hard timeouts** (see "Seat assistant on Claude, Nov 4" below). Tests 173/173, browser 6/6.
+
+## Seat assistant on Claude, Nov 4
+
+- **Why.** On Nov 4 at 01:24, 01:27 and 01:28 UTC three `POST /api/agent/chat` requests hung until Vercel's 300 s limit ("Task timed out after 300 seconds") with nothing logged before. NVIDIA's API itself was up (`/v1/models` listed `nvidia/nemotron-3-ultra-550b-a55b`; an unauthenticated chat call answered 401 in 0.3 s), so the stall was during generation on NVIDIA's free hosted endpoint, which we cannot control; the same path took about 10 s at 17:00 UTC the same day. `server/nvidia.js` created the `openai` client with no timeout, so a stall became a 5-minute hang.
+- **What changed.** `server/agent.js` `runAgent` now calls the Anthropic Messages API through the shared `anthropicClient` (`server/anthropic.js`) with the same model and effort as Ask AI (`studioAiModel()`, `STUDIO_AI_EFFORT`, both in `server/config.js`). The four tools are the same, as Anthropic tool definitions (`input_schema`); the loop appends each assistant message unchanged (thinking blocks included, as the API requires on tool use) and answers all tool_use blocks of a round in one user message of `tool_result` blocks (`is_error` on a rejected call). Only text blocks become the reply; thinking never does. System prompt, server-side pricing, `MAX_SEATS_PER_ORDER`, the stored `seat_proposals` flow, the `agent_actions` log sequence and the `{ reply, proposal }` response shape are unchanged, so `AgentPanel.jsx` and the Studio Seat agent needed no change. No tool can create, capture or refund a PayPal order (tested: the invented `create_paypal_order` / `capture_order` / `refund_capture` come back as "Unknown tool" and no request reaches PayPal).
+- **Timeouts** (`server/config.js`): `MODEL_CALL_TIMEOUT_MS` 20 s per seat-assistant call, `AGENT_REQUEST_BUDGET_MS` 40 s for all calls of one request (a later call gets only the time left; none starts once it is spent), `STUDIO_AI_TURN_TIMEOUT_MS` 45 s for one Ask AI turn (first try and retry together; the 10 s first-content retry still applies inside it). Each call carries its own AbortController deadline (a ref'd timer, not `AbortSignal.timeout()`, which does not keep the event loop alive) and passes the same number to the SDK as `timeout`; the client is built with `timeout: 45 s, maxRetries: 1`. On timeout the request answers `504 { "error": "The seat assistant took too long. Please try again." }` (Ask AI: "The analytics assistant took too long. Please try again."); `AgentPanel.jsx` and the Seat agent already show `payload.error`.
+- **NVIDIA kept for scripts only.** `server/nvidia.js`, `AGENT_MODEL` / `AGENT_BASE_URL` / `AGENT_TEMPLATE_KWARGS` and the `buildNvidiaRequest` / `completeTurn` / `sanitizeCompletion` / `describeTurn` builders in `server/studioAi.js` stay for `scripts/probe-studio-agent.mjs` and `scripts/time-ask-ai.mjs`. Nothing in the app's runtime path calls NVIDIA; `NVIDIA_API_KEY` is now listed under "Scripts only" in `.env.example` and can be removed from Vercel whenever Eddie wants (it is unused there).
+- **Tests.** `server/agent.test.js` uses a `messages.create` fake (Messages-shaped replies with thinking blocks; a `stall` entry waits for the call's AbortSignal). New: "Buy 12 seats for my fall class" to a stored proposal with no thinking in the reply; "Refund my last seat order" to a refund proposal; a stalled call ends as 504 at the per-call deadline; the request budget caps later calls; no PayPal call ever happens from the agent. `server/studioAi.test.js`: a streaming turn cut off at the hard deadline is a 504 and not retried; stalled first try plus stalled retry end at the deadline; the proxy answers 504 JSON. The browser tests fake `api.anthropic.com/v1/messages` instead of NVIDIA. Totals: `npm test` 173/173, `npm run test:browser` 6/6.
+- **Live check** (this session, production, headless Chromium): see "Live check, Nov 4" below.
+
+## Live check, Nov 4 (production, deploy of `b2c41fb`, headless Chromium)
+
+- `GET /api/health` reported `b2c41fb6bd75a3178bbc1c135c002f7e13a82a51` about 40 s after the push.
+- A new test account was created with "Create account" (the earlier test account's password was not on record): `hackathon-live-check-nov4@example.com`. **Eddie removes both test users** (Supabase Auth > Users in the hackathon project; the other is `hackathon-signup-test@example.com`).
+- **Overview seat assistant:** chip "Buy 12 seats for my fall class" filled the input; Send to the proposal "12 seats · USD 49.00 each · USD 588.00 total · Fall class" with a Confirm button in **6.4 s** (`POST /api/agent/chat` answered 200 once). Reply: "Your order is ready for you to confirm: 12 seats for "Fall class" at 49.00 USD each, for a total of 588.00 USD. Nothing has been ordered or charged yet. Click Confirm to continue to PayPal." Confirm was not clicked. Screenshot `seat-assistant-proposal.png` (session scratchpad, not in the repo).
+- **Instructor analytics, Ask AI:** chip "Buy 5 seats for the fall class"; send to the Confirm bar above the report "Seat agent prepared an order · 5 seats · Fall class · USD 49.00 each · USD 245.00 total" with "Confirm and pay with PayPal" in **9.4 s** (two lead turns through `/api/studio-ai/chat` and one `/api/agent/chat`, all 200). The lead delegated to the Seat agent and its final reply said nothing is ordered or charged until Confirm. Confirm was not clicked. Screenshot `ask-ai-confirm-bar.png`. No page errors in either step.
+- Both proposals were left to expire (10 minutes); nothing was ordered, paid or refunded.
+
+## Judge sign-up test, Nov 4 (live site, headless Chromium)
+
+- **Sign-up works with no email step.** `hackathon-signup-test@example.com` + an 8+ character password, "Create account": notice "Account created and signed in.", the checkout form swapped to the Class name input, the Seat assistant appeared, ledger empty (`No seat orders yet.`, 0 rows, Class seats 30 / 30). Signing in again with the same account also works. **Eddie removes this test user** (Supabase Auth > Users in the hackathon project).
+- **The seat assistant did not answer.** The chip "Buy 12 seats for my fall class" filled the input; on send, `POST /api/agent/chat` hung and the Vercel Function hit "Task timed out after 300 seconds" (runtime errors, route `/api`, deployment of `ea9353c`, first at 01:19:49 UTC). Three sends over five minutes (01:19, 01:22, 01:23 UTC), all the same. The function logged nothing before the timeout, and `GET /api/ledger` for the same user answered normally, so the stall is in the NVIDIA call (`nvidia/nemotron-3-ultra-550b-a55b`), not Supabase or the app. The browser showed "Unexpected token 'u', "upstream r"... is not valid JSON" after 30 s: the test machine's outbound proxy gave up before Vercel did; from a normal browser the UI would spin for 5 minutes and then show a 504. No proposal screenshot exists because no proposal appeared. Confirm was never clicked.
+- **Resolved the same day:** the seat assistant moved to Claude Sonnet 5.5 with hard timeouts (see "Seat assistant on Claude, Nov 4").
 - Tests: `npm test` 166/166 (no network calls); `npm run test:browser` 6/6 (the 3 below plus `e2e/layout.test.mjs`: class-name input, layout at 1440/1920 in all three themes, pills at 1024) (headless Chromium: themes and chips; refund chip to Confirm to sandbox refund to REFUNDED ledger to reset; Ask AI lead to Seat agent to Confirm to PayPal). Both browser harnesses now pick a free Vite HMR port, so they run together.
 - Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
@@ -55,10 +83,10 @@ Measured by Eddie on production from the `STUDIO_AI_TIMING` log rows. Effort `lo
 4. **Refund revoke timing.** The Confirm endpoint revokes seats immediately when PayPal answers COMPLETED and leaves a PENDING refund to the webhook. If you want webhook-only revoke, delete the `revokeSeatAccess` call in `refundSandboxCapture` (`server/paypal.js`); the tests in `server/refundCapture.test.js` then need the `revoked` expectations flipped.
 5. **Demo reset is not one transaction.** It deletes table by table (entitlements, payments, orders, proposals, events, actions), each filtered to the signed-in user; a failure part-way is a 502 and a second click finishes. A single SQL function would be atomic but needs another migration; say if you want that.
 6. **Judge test account.** Still none created or written anywhere. SUBMISSION.md says to put credentials in the form, not the repo.
-7. **cloudflared.deb and the old names in history** (unchanged): the rewrite of `main` is yours.
+7. **cloudflared.deb and the old names in history: stay by decision** (Nov 4). No rewrite, no force-push.
 8. **Logo** (unchanged): no asset in the repo; the sidebar keeps the GraduationCap mark.
 9. **Theme defaults.** Black & Safety-Yellow is the default as briefed. The Light theme keeps `--primary-strong` for buttons and small text (AA); the dark themes use the raw primary everywhere because it already clears AA on their surfaces. The Industrial `--accent-soft` tint was darkened to `oklch(25% .035 45)` to keep primary text on it at 4.5:1.
-10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged).
+10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged). Tried Nov 4 from the cloud session: both `git push origin --delete` and the GitHub API delete are refused by the session's proxy (write to that path not permitted). Delete it from GitHub > Branches, or locally with `git push origin --delete ccr-90064225-vddchi`.
 11. **Anthropic key: done** (in Vercel Production; Ask AI measured live Nov 3). **AG Studio trial license (~Nov 5)**: unchanged from the previous handoff.
 
 ## Hard rules
@@ -71,11 +99,11 @@ Measured by Eddie on production from the `STUDIO_AI_TIMING` log rows. Effort `lo
 
 ## Stack
 
-Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sandbox, NVIDIA hosted API (OpenAI-compatible, `openai` SDK) for the seat agent, Anthropic Messages API (`@anthropic-ai/sdk` 1.3.0) for Ask AI, AG Studio 3.0.0 with AG Grid pinned to 36.2.0. No AG Studio license yet (watermark is fine).
+Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sandbox, Anthropic Messages API (`@anthropic-ai/sdk` 1.3.0, Claude Sonnet 5.5 at effort `low`) for both the seat agent and Ask AI, AG Studio 3.0.0 with AG Grid pinned to 36.2.0. The `openai` SDK and `server/nvidia.js` remain only for the probe and timing scripts' NVIDIA baseline. No AG Studio license yet (watermark is fine).
 
 ## Verified working
 
-- Seat agent (NVIDIA Nemotron 3 Ultra): plain English to server-priced proposal to Confirm to PayPal Sandbox to capture to seats granted. Off-topic blocked server-side. (Eddie's machine and the hosted demo.)
+- Seat agent (Claude Sonnet 5.5 since Nov 4; NVIDIA Nemotron 3 Ultra before): plain English to server-priced proposal to Confirm to PayPal Sandbox to capture to seats granted. Off-topic blocked server-side. The Claude path was checked live on Nov 4 (proposal chip on Overview and the Ask AI handoff; see "Live check, Nov 4"); the Confirm-to-PayPal step is unchanged code, verified earlier.
 - Ledger and capture read from Supabase, scoped to the signed-in instructor. Idempotent.
 - Hosted demo: API as one Vercel Function, seat proposals in Supabase. Webhook verified live; verified events recorded in `paypal_webhook_events`; event drawer verified with real events (Nov 1).
 - Brand theme (`f4d2ae6`), checked in headless Chromium against stubbed data: Inter and Fraunces load, the Class fill widget renders grouped rows from Studio (`Spring class 30 / 30`, `Fall class 12 / 30`), the Revenue and Seat progress tiles render, charts use the brand palette, the footer link opens www.sentinellearning.com in a new tab, no page errors. The live site serves the new theme (checked after deploy).
@@ -89,7 +117,8 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 - Refund to seat revoke (see Owner decisions 1 and 2).
 - Ask AI on Claude: the 10 s first-content retry and a refusal as a clean 422 are tested against fakes only; the Nov 3 runs did not report either.
-- `npm run time:ask-ai` (headless harness) hung on Eddie's machine before the 5-minute timeout was added; not debugged. Still times the NVIDIA path.
+- `npm run time:ask-ai` (headless harness) hung on Eddie's machine before the 5-minute timeout was added; not debugged. Still times the NVIDIA baseline path, not the app's Claude path.
+- The seat assistant's 504 on a stalled Claude call is tested against fakes only; no stall was seen live.
 
 ## Things that looked worse or need a second look
 
@@ -131,6 +160,7 @@ Question: can `@paypal/agent-toolkit` be used for ONLY a refund tool without tou
 - `src/components/statusClass.js` + `.status-cell` pills in `SeatTable.jsx`; `--status-*` tokens per theme.
 - `src/analytics/seatProgress.js`: Seat progress widget model (remaining = class size minus unlocked).
 - `src/components/PromptChips.jsx`: chips; `AgentPanel.jsx` (`SEAT_CHIPS`, `REFUND_CHIP`), `InstructorAnalytics.jsx` (`ASK_AI_CHIPS`, portalled under Studio's input).
+- Seat assistant: `server/agent.js` (`runAgent` on the Messages API, `createMessage` with the per-call deadline, `replyText` text-blocks-only, `TIMEOUT_REPLY`); `server/anthropic.js` (shared client, `timeout` + `maxRetries`); `server/config.js` (`MODEL_CALL_TIMEOUT_MS`, `AGENT_REQUEST_BUDGET_MS`, `STUDIO_AI_TURN_TIMEOUT_MS`).
 - Refund: `server/agent.js` `propose_refund` and `latestRefundableCapture`; `server/paypal.js` `refundSandboxCapture`; `POST /api/paypal/captures/:captureId/refund` in `server/app.js`; `src/components/RefundConfirmBar.jsx`; `src/analytics/seatAgent.js` `proposalArtifact`. Tests: `server/refundCapture.test.js`, `server/agent.test.js`, `e2e/dashboard.test.mjs`.
 - Reset: `server/supabase.js` `resetDemoDataForUser` and `DEMO_RESET_TABLES`; `POST /api/demo/reset`; `src/components/ResetDemoButton.jsx`. Tests: `server/demoReset.test.js`, `e2e/dashboard.test.mjs`.
 - `SUBMISSION.md`: Devpost fields and the Nov 5 checklist. `DEMO-SCRIPT.md`: updated click path.
@@ -152,14 +182,15 @@ Tools are sent without `strict: true`. Live on Nov 3, the chosen model (Sonnet 5
 
 - `server/app.js`: the Express app, all `/api` routes. `server/index.js` adds the client and listens, for local use. `api/index.js`: the single Vercel Function; `vercel.json` rewrites `/api/:route*` to `/api?__route=:route*` and everything else to `/index.html`.
 - Webhook raw body: `NODEJS_HELPERS=0` on Vercel so PayPal's postback verification gets the bytes as received.
-- Env vars (Production, set): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`*, `PAYPAL_CLIENT_ID`*, `PAYPAL_SECRET`*, `PAYPAL_WEBHOOK_ID`*, `PAYPAL_BASE_URL`, `APP_BASE_URL`, `ANTHROPIC_API_KEY`*, `NVIDIA_API_KEY`*, `NODEJS_HELPERS=0`; optional `STUDIO_AI_TIMING=1`. `STUDIO_AI_MODEL` was removed on Nov 3, so production uses the code default in `server/config.js`. * = Secret. `.env.example` documents all of them.
+- Env vars (Production, set): `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`*, `PAYPAL_CLIENT_ID`*, `PAYPAL_SECRET`*, `PAYPAL_WEBHOOK_ID`*, `PAYPAL_BASE_URL`, `APP_BASE_URL`, `ANTHROPIC_API_KEY`*, `NVIDIA_API_KEY`* (unused by the app since Nov 4; scripts only), `NODEJS_HELPERS=0`; optional `STUDIO_AI_TIMING=1`. `STUDIO_AI_MODEL` was removed on Nov 3, so production uses the code default in `server/config.js`. * = Secret. `.env.example` documents all of them.
 
 ## Remaining (in order)
 
-Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`).
+Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); Devpost draft complete except the video.
 
-1. Devpost draft (Nov 5): paste the fields from `SUBMISSION.md` and run its Nov 5 early check.
-2. Record the video from `DEMO-SCRIPT.md` (the Anthropic key is live, so the Ask AI steps can be recorded).
-3. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
-4. AG Studio trial license (~Nov 5).
-5. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
+1. **Seat assistant on the live site:** done on Claude (Nov 4, "Live check, Nov 4"). Optional: one look from Eddie's own browser before recording.
+2. Record the video from `DEMO-SCRIPT.md`, upload, paste the link into `SUBMISSION.md`.
+3. Delete the test users `hackathon-signup-test@example.com` and `hackathon-live-check-nov4@example.com`, and the leftover branch `ccr-90064225-vddchi` (owner decision 10).
+4. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
+5. AG Studio trial license (~Nov 5).
+6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
