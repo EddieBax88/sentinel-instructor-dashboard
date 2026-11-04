@@ -47,7 +47,7 @@ An instructor signs in, asks for seats in plain English ("Buy 12 seats for my fa
 
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (PayPal Sandbox only; create an account on the Overview page)
 - Repository: https://github.com/EddieBax88/sentinel-instructor-dashboard
-- Demo video: (add the link once recorded; the click path is in DEMO-SCRIPT.md)
+- Demo video: https://youtu.be/FkZfwHiJv8k
 
 ## Nov 5 early check
 
@@ -57,5 +57,5 @@ An instructor signs in, asks for seats in plain English ("Buy 12 seats for my fa
 - [ ] **No secrets in the tree or history.** Run `git grep -nE "(sk-ant-|sk-live|AIza|-----BEGIN|nvapi-|eyJhbGciOi)" -- . ':!package-lock.json'` on the branch; the only hit must be the fake test key `sk-ant-test-key-that-must-never-reach-the-browser` in `server/studioAi.test.js` and `e2e/dashboard.test.mjs` (`e2e/seatAgent.test.mjs` and `e2e/layout.test.mjs` use the plain `test-anthropic-key`). `.env` is gitignored and was never committed (`git log --all -- .env` is empty).
 - [ ] **Hosted demo answers.** `curl https://sentinel-hackathon-demo-mu.vercel.app/api/health` returns `{"status":"ok","environment":"sandbox-only","commit":"<sha of the deployed commit>"}`.
 - [ ] **Tests green on a clean clone.** `npm ci && npm test && npm run test:browser` (173 unit tests, 6 browser tests as of Nov 4).
-- [ ] **Video under 3 minutes**, recorded from DEMO-SCRIPT.md, uploaded, link pasted above.
+- [x] **Video under 3 minutes**, recorded from DEMO-SCRIPT.md, uploaded and public: https://youtu.be/FkZfwHiJv8k
 - [ ] **Owner decisions in HANDOFF.md resolved** or consciously deferred: refund migration applied, `PAYMENT.CAPTURE.REFUNDED` on the webhook subscription, the agent-actions migration applied, judge test account.
