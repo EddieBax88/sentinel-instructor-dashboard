@@ -2,10 +2,12 @@
 
 Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
-## Repo state (Nov 3, 2026, after the live Ask AI measurements)
+## Repo state (Nov 4, 2026, after the pre-video cleanup)
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
-- PR #1 (draft) is open against `main`. Never merge to `main` without Eddie. The judged README and LICENSE are the ones on `main` (see SUBMISSION.md checklist).
+- **PR #1 is merged** (Nov 4, merge commit `94e634d`, a merge commit, not a squash, on Eddie's instruction). `main` now carries the full branch; `LICENSE` (MIT) is at its root and the GitHub API reports the repo license as `MIT`. The branch was kept: Vercel Production still deploys from it. Any further work goes on the branch and needs a new PR into `main`.
+- **Devpost draft: complete except the video.** `SUBMISSION.md` holds every field; `DEMO-SCRIPT.md` is the click path.
+- **cloudflared.deb and the old names stay in git history by decision** (Nov 4): no history rewrite, no force-push.
 - Commits this session, oldest first (each pushed, deployed READY, health `ok` with that commit):
   - `f1333e0` Seat math: pending orders no longer reduce the seats remaining; header pill "N awaiting payment"; `/api/health` reports the commit.
   - `a863f9e` Triple theme: Black & Safety-Yellow (default), Industrial, Light; Studio re-themed through sRGB twins; AA contrast tests; browser test.
@@ -17,7 +19,15 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
   - `96d19ea` HANDOFF after the mission.
   - `8e73d5c` Class names group case-insensitively with one spelling (`fall class` and `Fall class` were splitting by-class charts and grids); Card 01's input is labelled "Class name"; Studio widget-picker icons use currentColor (the last hardcoded colour). Tests 164/164, browser 3/3.
   - `0f4e071` Six visual fixes from a full-screen check of the live deploy (see "Visual fixes, Nov 3" below). Tests 166/166, browser 6/6.
-  - Nov 3, this commit: the Ask AI model choice recorded from Eddie's live measurements (see "Ask AI live measurements, Nov 3" below); the Ask AI progress line now reads "Most questions take about 15 seconds."; SUBMISSION.md updated. Tests 166/166, browser 6/6.
+  - `dd21d87` The Ask AI model choice recorded from Eddie's live measurements (see "Ask AI live measurements, Nov 3" below); the Ask AI progress line now reads "Most questions take about 15 seconds."; SUBMISSION.md updated. Tests 166/166, browser 6/6.
+  - `ea9353c` Pre-video cleanup (Nov 4): DEMO-SCRIPT.md says "in about 15 seconds"; README gained "How PayPal is used" (Orders v2, Payments v2, verified webhooks), names Claude Sonnet 5.5 for Ask AI and AG Grid / AG Charts / AG Studio together, and covers the Confirm-gated refund. README has no retired product names. Secret scan clean (only the fake test key and the docs that quote the pattern); `git log --all -- .env` empty. Tests 166/166, browser 6/6.
+  - Nov 4, this commit: HANDOFF after the cleanup and the judge sign-up test (below).
+
+## Judge sign-up test, Nov 4 (live site, headless Chromium)
+
+- **Sign-up works with no email step.** `hackathon-signup-test@example.com` + an 8+ character password, "Create account": notice "Account created and signed in.", the checkout form swapped to the Class name input, the Seat assistant appeared, ledger empty (`No seat orders yet.`, 0 rows, Class seats 30 / 30). Signing in again with the same account also works. **Eddie removes this test user** (Supabase Auth > Users in the hackathon project).
+- **The seat assistant did not answer.** The chip "Buy 12 seats for my fall class" filled the input; on send, `POST /api/agent/chat` hung and the Vercel Function hit "Task timed out after 300 seconds" (runtime errors, route `/api`, deployment of `ea9353c`, first at 01:19:49 UTC). Three sends over five minutes (01:19, 01:22, 01:23 UTC), all the same. The function logged nothing before the timeout, and `GET /api/ledger` for the same user answered normally, so the stall is in the NVIDIA call (`nvidia/nemotron-3-ultra-550b-a55b`), not Supabase or the app. The browser showed "Unexpected token 'u', "upstream r"... is not valid JSON" after 30 s: the test machine's outbound proxy gave up before Vercel did; from a normal browser the UI would spin for 5 minutes and then show a 504. No proposal screenshot exists because no proposal appeared. Confirm was never clicked.
+- **Before the video:** try the chip from Eddie's browser. If it still hangs, check the NVIDIA key on build.nvidia.com (developer-forum threads from this week report free Build API accounts turned to 403/404 after an account-verification change; a hang is different, but the key is the first thing to rule out), and consider a client timeout on the seat agent's `openai` call (`server/agent.js` has none; the SDK default is 10 minutes, longer than Vercel's 300 s) so a stuck upstream returns a clean error instead of a 504.
 - Tests: `npm test` 166/166 (no network calls); `npm run test:browser` 6/6 (the 3 below plus `e2e/layout.test.mjs`: class-name input, layout at 1440/1920 in all three themes, pills at 1024) (headless Chromium: themes and chips; refund chip to Confirm to sandbox refund to REFUNDED ledger to reset; Ask AI lead to Seat agent to Confirm to PayPal). Both browser harnesses now pick a free Vite HMR port, so they run together.
 - Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
@@ -55,10 +65,10 @@ Measured by Eddie on production from the `STUDIO_AI_TIMING` log rows. Effort `lo
 4. **Refund revoke timing.** The Confirm endpoint revokes seats immediately when PayPal answers COMPLETED and leaves a PENDING refund to the webhook. If you want webhook-only revoke, delete the `revokeSeatAccess` call in `refundSandboxCapture` (`server/paypal.js`); the tests in `server/refundCapture.test.js` then need the `revoked` expectations flipped.
 5. **Demo reset is not one transaction.** It deletes table by table (entitlements, payments, orders, proposals, events, actions), each filtered to the signed-in user; a failure part-way is a 502 and a second click finishes. A single SQL function would be atomic but needs another migration; say if you want that.
 6. **Judge test account.** Still none created or written anywhere. SUBMISSION.md says to put credentials in the form, not the repo.
-7. **cloudflared.deb and the old names in history** (unchanged): the rewrite of `main` is yours.
+7. **cloudflared.deb and the old names in history: stay by decision** (Nov 4). No rewrite, no force-push.
 8. **Logo** (unchanged): no asset in the repo; the sidebar keeps the GraduationCap mark.
 9. **Theme defaults.** Black & Safety-Yellow is the default as briefed. The Light theme keeps `--primary-strong` for buttons and small text (AA); the dark themes use the raw primary everywhere because it already clears AA on their surfaces. The Industrial `--accent-soft` tint was darkened to `oklch(25% .035 45)` to keep primary text on it at 4.5:1.
-10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged).
+10. **Delete the leftover branch `ccr-90064225-vddchi`** (PR #2 is merged). Tried Nov 4 from the cloud session: both `git push origin --delete` and the GitHub API delete are refused by the session's proxy (write to that path not permitted). Delete it from GitHub > Branches, or locally with `git push origin --delete ccr-90064225-vddchi`.
 11. **Anthropic key: done** (in Vercel Production; Ask AI measured live Nov 3). **AG Studio trial license (~Nov 5)**: unchanged from the previous handoff.
 
 ## Hard rules
@@ -156,10 +166,11 @@ Tools are sent without `strict: true`. Live on Nov 3, the chosen model (Sonnet 5
 
 ## Remaining (in order)
 
-Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`).
+Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); Devpost draft complete except the video.
 
-1. Devpost draft (Nov 5): paste the fields from `SUBMISSION.md` and run its Nov 5 early check.
-2. Record the video from `DEMO-SCRIPT.md` (the Anthropic key is live, so the Ask AI steps can be recorded).
-3. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
-4. AG Studio trial license (~Nov 5).
-5. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
+1. **Seat assistant on the live site:** confirm the chip answers from Eddie's browser (see "Judge sign-up test, Nov 4"). The video's seat-assistant steps depend on it.
+2. Record the video from `DEMO-SCRIPT.md`, upload, paste the link into `SUBMISSION.md`.
+3. Delete the test user `hackathon-signup-test@example.com` and the leftover branch `ccr-90064225-vddchi` (owner decision 10).
+4. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
+5. AG Studio trial license (~Nov 5).
+6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
