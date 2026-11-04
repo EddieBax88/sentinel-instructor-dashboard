@@ -1,111 +1,103 @@
+import { DEFAULT_CLASS_SIZE } from './config.js';
+
 export const COHORT = Object.freeze({
   id: 'sentinel-fall-2026',
   name: 'Sentinel Fall 2026',
-  capacity: 12,
+  classSize: DEFAULT_CLASS_SIZE,
 });
 
-const pendingOrders = new Map();
-const transactions = new Map();
+// Class names as typed: trimmed, inner whitespace collapsed, first letter capitalised, the rest
+// as the instructor wrote it ("fall class" becomes "Fall class", "Fall Journeyman Class" stays).
+export function tidyClassName(text) {
+  const collapsed = typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : '';
+  return collapsed ? collapsed[0].toUpperCase() + collapsed.slice(1) : '';
+}
 
-export function assertSeatAvailable() {
-  const reservedSeats = pendingOrders.size;
-  if (transactions.size + reservedSeats >= COHORT.capacity) {
-    throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
+const classKey = (text) => tidyClassName(text).toLowerCase();
+
+// One display name per class across an instructor's rows, so "fall class" and "Fall class" group
+// as one class in the ledger, the analytics grids and the Studio charts. The stored rows keep
+// their text; this only decides what is shown. For each case-insensitive key the most frequent
+// spelling (first letter capitalised) wins; a tie is settled alphabetically.
+export function canonicalClassNames(names) {
+  const variants = new Map();
+  for (const raw of names) {
+    const tidy = tidyClassName(raw);
+    if (!tidy) continue;
+    const key = tidy.toLowerCase();
+    const counts = variants.get(key) ?? new Map();
+    counts.set(tidy, (counts.get(tidy) ?? 0) + 1);
+    variants.set(key, counts);
   }
-}
-
-export function recordPendingOrder(order) {
-  if (!order?.orderId || !order.userId || !order.studentName || !order.amount || !order.currency) {
-    throw new Error('Pending orders must include an order, student, and fixed price.');
+  const canonical = new Map();
+  for (const [key, counts] of variants) {
+    const [best] = [...counts.entries()].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b));
+    canonical.set(key, best[0]);
   }
-  if (pendingOrders.has(order.orderId) || transactions.has(order.orderId)) return;
-  assertSeatAvailable();
-  pendingOrders.set(order.orderId, { ...order, status: 'PENDING', createdAt: new Date().toISOString() });
+  return (raw) => canonical.get(classKey(raw)) ?? tidyClassName(raw);
 }
 
-export function getPendingOrder(orderId) {
-  return pendingOrders.get(orderId);
+export function money(value) {
+  return Number(value).toFixed(2);
 }
 
-export function discardPendingOrder(orderId) {
-  pendingOrders.delete(orderId);
+// Ledger status for a stored order: COMPLETED (seats unlocked), REFUNDED (a full PayPal refund
+// revoked the seats), or AWAITING PAYMENT (created, maybe approved, not captured).
+export function ledgerStatus(storedStatus) {
+  if (storedStatus === 'COMPLETED') return 'COMPLETED';
+  if (storedStatus === 'REFUNDED') return 'REFUNDED';
+  return 'AWAITING PAYMENT';
 }
 
-export function findTransactionByOrderId(orderId) {
-  return transactions.get(orderId);
+// Seats still open in the class: the class size less the seats actually unlocked (captured).
+// Orders awaiting payment hold no seat yet, so they are reported on their own (seatsReserved)
+// and never subtracted here. A refunded order's seats leave seatsSold, so they come back.
+export function seatsRemaining(classSize, seatsSold) {
+  return Math.max(0, classSize - seatsSold);
 }
 
-export function unlockSeatsFromVerifiedCapture({ orderId, captureId, status, amount, currency, source }) {
-  const existing = transactions.get(orderId);
-  if (existing) return existing;
+const READINESS = { COMPLETED: 'Seat unlocked', REFUNDED: 'Seat revoked', 'AWAITING PAYMENT': 'Payment pending' };
 
-  const order = pendingOrders.get(orderId);
-  if (!order) throw Object.assign(new Error('Capture does not match a pending Sentinel order.'), { statusCode: 404 });
-  if (status !== 'COMPLETED' || !captureId) {
-    throw Object.assign(new Error('A completed PayPal capture is required before unlocking a seat.'), { statusCode: 409 });
-  }
-  if (amount !== order.amount || currency !== order.currency) {
-    throw Object.assign(new Error('Capture amount or currency does not match the pending seat order.'), { statusCode: 409 });
-  }
-  if (transactions.size >= COHORT.capacity) {
-    throw Object.assign(new Error('The cohort has no seats available.'), { statusCode: 409 });
-  }
-
-  const transaction = {
-    orderId,
-    captureId,
-    userId: order.userId,
-    studentName: order.studentName,
-    cohortId: order.cohortId,
-    amount,
-    currency,
-    status: 'COMPLETED',
-    source,
-    unlockedAt: new Date().toISOString(),
-  };
-  transactions.set(orderId, transaction);
-  pendingOrders.delete(orderId);
-  console.info(`Seat unlocked: cohort=${order.cohortId} order=${orderId} capture=${captureId} source=${source}`);
-  return transaction;
-}
-
-export function getDashboardState() {
-  const orders = [...pendingOrders.values()];
-  const completed = [...transactions.values()];
-  const transactionRows = [
-    ...orders.map((order) => ({ ...order, captureId: '', status: 'AWAITING PAYMENT' })),
-    ...completed,
-  ].sort((first, second) => (second.unlockedAt || second.createdAt).localeCompare(first.unlockedAt || first.createdAt));
-  const students = [
-    ...orders.map((order) => ({
-      id: order.orderId,
-      name: order.studentName,
-      cohort: COHORT.name,
-      readiness: 'Payment pending',
-    })),
-    ...completed.map((transaction) => ({
-      id: transaction.captureId,
-      name: transaction.studentName,
-      cohort: COHORT.name,
-      readiness: 'Seat unlocked',
-    })),
-  ];
+// Builds the ledger from Supabase paypal_orders rows (already limited to one instructor).
+export function dashboardFromOrders(rows) {
+  const className = canonicalClassNames(rows.map((row) => row.student_name));
+  const orders = rows.map((row) => {
+    const payment = Array.isArray(row.paypal_payments) ? row.paypal_payments[0] : row.paypal_payments;
+    const status = ledgerStatus(row.status);
+    return {
+      orderId: row.paypal_order_id,
+      studentName: className(row.student_name),
+      cohortId: COHORT.id,
+      quantity: Number(row.quantity ?? 1),
+      amount: money(row.amount),
+      currency: row.currency,
+      captureId: payment?.capture_id ?? '',
+      status,
+      createdAt: row.created_at,
+      unlockedAt: status === 'COMPLETED' ? payment?.created_at : undefined,
+    };
+  });
+  const seats = (status) => orders.filter((order) => order.status === status).reduce((sum, order) => sum + order.quantity, 0);
+  const seatsSold = seats('COMPLETED');
+  const seatsReserved = seats('AWAITING PAYMENT');
+  const seatsRefunded = seats('REFUNDED');
 
   return {
-    transactions: transactionRows,
+    transactions: orders,
     quotas: [{
       id: COHORT.id,
       cohort: COHORT.name,
-      capacity: COHORT.capacity,
-      seatsSold: completed.length,
-      seatsReserved: orders.length,
-      seatsAvailable: COHORT.capacity - completed.length - orders.length,
+      classSize: COHORT.classSize,
+      seatsSold,
+      seatsReserved,
+      seatsRefunded,
+      seatsRemaining: seatsRemaining(COHORT.classSize, seatsSold),
     }],
-    students,
+    students: orders.map((order) => ({
+      id: order.captureId || order.orderId,
+      name: order.studentName,
+      cohort: COHORT.name,
+      readiness: READINESS[order.status],
+    })),
   };
-}
-
-export function resetSeatState() {
-  pendingOrders.clear();
-  transactions.clear();
 }

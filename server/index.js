@@ -2,56 +2,13 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer as createViteServer } from 'vite';
-import { captureSandboxOrder, createSandboxOrder, isPaypalConfigured } from './paypal.js';
-import { authenticateSupabaseUser, isSupabaseConfigured } from './supabase.js';
-import webhookRouter from './webhook.js';
-import { getDashboardState } from './seatUnlock.js';
+import app from './app.js';
 
+// Local server: the API from server/app.js plus the client, built (`npm start`) or through Vite's
+// dev middleware (`npm run dev`). On Vercel, api/index.js serves the API and dist/ is static.
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(currentDirectory, '..');
 const clientBuildDirectory = path.join(projectDirectory, 'dist');
-const app = express();
-
-function getBearerToken(authorization) {
-  const match = /^Bearer\s+(\S+)$/i.exec(authorization || '');
-  if (!match) {
-    throw Object.assign(new Error('A valid Supabase access token is required.'), { statusCode: 401 });
-  }
-  return match[1];
-}
-
-app.disable('x-powered-by');
-app.use(express.json({
-  verify: (request, _response, buffer) => {
-    if (request.originalUrl.startsWith('/api/paypal/webhook')) request.rawBody = Buffer.from(buffer);
-  },
-}));
-app.get('/api/dashboard', (_request, response) => {
-  response.json({ ...getDashboardState(), paymentAvailable: isPaypalConfigured() && isSupabaseConfigured() });
-});
-
-app.post('/api/paypal/orders', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    const order = await createSandboxOrder({ studentName: request.body?.studentName, userId: user.id });
-    response.status(201).json(order);
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.post('/api/paypal/orders/:orderId/capture', async (request, response) => {
-  try {
-    const user = await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
-    response.json(await captureSandboxOrder(request.params.orderId, user.id));
-  } catch (error) {
-    response.status(error.statusCode || 502).json({ error: error.message });
-  }
-});
-
-app.use('/api/paypal/webhook', webhookRouter);
-app.get('/api/health', (_request, response) => response.json({ status: 'ok', environment: 'sandbox-only' }));
 
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(clientBuildDirectory));
@@ -60,6 +17,7 @@ if (process.env.NODE_ENV === 'production') {
     response.sendFile(path.join(clientBuildDirectory, 'index.html'));
   });
 } else {
+  const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
     configFile: path.join(projectDirectory, 'vite.config.js'),
     server: { middlewareMode: true },

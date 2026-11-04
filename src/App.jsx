@@ -1,7 +1,17 @@
 import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import NecDemo from './components/NecDemo.jsx';
+import { createClient } from '@supabase/supabase-js';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import AgentPanel from './components/AgentPanel.jsx';
+import EventDrawer from './components/EventDrawer.jsx';
+import ResetDemoButton from './components/ResetDemoButton.jsx';
 import SeatTable from './components/SeatTable.jsx';
+import { latestClassName } from './components/latestClassName.js';
+import ThemeSwitcher from './components/ThemeSwitcher.jsx';
+
+const EMPTY_LEDGER = { transactions: [], quotas: [], students: [] };
+// AG Studio is large, so it loads only when the analytics view opens.
+const InstructorAnalytics = lazy(() => import('./components/InstructorAnalytics.jsx'));
+const viewFromHash = () => (window.location.hash === '#analytics' ? 'analytics' : 'dashboard');
 
 async function readResponse(response) {
   const payload = await response.json();
@@ -10,11 +20,20 @@ async function readResponse(response) {
 }
 
 export default function App() {
-  const [dashboard, setDashboard] = useState({ transactions: [], quotas: [], students: [], paymentAvailable: false });
+  const [dashboard, setDashboard] = useState({ transactions: [], quotas: [], students: [], paymentAvailable: false, agentAvailable: false });
   const [studentName, setStudentName] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [supabase, setSupabase] = useState(null);
+  const [session, setSession] = useState(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [ledgerVersion, setLedgerVersion] = useState(0);
+  const [view, setView] = useState(viewFromHash);
   const processedOrder = useRef('');
+  // Set once the instructor types in Card 01, so the 3-second ledger poll never overwrites them.
+  const classNameEdited = useRef(false);
+  const accessToken = session?.access_token;
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
   const cancelledCheckout = new URLSearchParams(window.location.search).get('checkout') === 'cancelled';
 
@@ -22,8 +41,11 @@ export default function App() {
     let active = true;
     const refresh = async () => {
       try {
-        const data = await readResponse(await fetch('/api/dashboard'));
-        if (active) setDashboard(data);
+        const flags = await readResponse(await fetch('/api/dashboard'));
+        const ledger = accessToken
+          ? await readResponse(await fetch('/api/ledger', { headers: { Authorization: `Bearer ${accessToken}` } }))
+          : EMPTY_LEDGER;
+        if (active) setDashboard({ ...flags, ...ledger });
       } catch (error) {
         if (active) setNotice(error.message);
       }
@@ -34,26 +56,65 @@ export default function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [accessToken, ledgerVersion]);
 
   useEffect(() => {
-    if (!orderFromReturn || processedOrder.current === orderFromReturn) return;
+    let subscription;
+    fetch('/api/supabase-config')
+      .then(readResponse)
+      .then(async ({ url, publishableKey }) => {
+        const client = createClient(url, publishableKey);
+        setSupabase(client);
+        setSession((await client.auth.getSession()).data.session);
+        subscription = client.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)).data.subscription;
+      })
+      .catch((error) => setNotice(error.message));
+    return () => subscription?.unsubscribe();
+  }, []);
+
+  function authHeaders() {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+
+  async function signIn(event) {
+    event.preventDefault();
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setNotice(error ? error.message : 'Signed in.');
+    setBusy(false);
+  }
+
+  async function signUp() {
+    setBusy(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    setNotice(error ? error.message : data.session ? 'Account created and signed in.' : 'Check your email to confirm the account, then sign in.');
+    setBusy(false);
+  }
+
+  // Runs once per returned order. Keyed on the access token, not the session object: Supabase
+  // replaces the session object after sign-in loads, and a cancelled run left busy stuck on.
+  useEffect(() => {
+    if (!orderFromReturn || !accessToken || processedOrder.current === orderFromReturn) return;
     processedOrder.current = orderFromReturn;
-    let active = true;
     setBusy(true);
     setNotice('PayPal approved the order. Confirming capture…');
-    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST' })
+    fetch(`/api/paypal/orders/${encodeURIComponent(orderFromReturn)}/capture`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` } })
       .then(readResponse)
-      .then(async ({ transaction }) => {
-        if (!active) return;
-        setNotice(`Payment captured. ${transaction.studentName}'s seat is unlocked.`);
+      .then(({ transaction }) => {
+        const seats = transaction.quantity === 1 ? '1 seat' : `${transaction.quantity} seats`;
+        setNotice(`Payment captured. ${seats} unlocked for ${transaction.studentName}.`);
         window.history.replaceState({}, '', window.location.pathname);
-        setDashboard(await readResponse(await fetch('/api/dashboard')));
+        setLedgerVersion((version) => version + 1);
       })
-      .catch((error) => active && setNotice(error.message))
-      .finally(() => active && setBusy(false));
-    return () => { active = false; };
-  }, [orderFromReturn]);
+      .catch((error) => setNotice(error.message))
+      .finally(() => setBusy(false));
+  }, [orderFromReturn, accessToken]);
+
+  useEffect(() => {
+    const onHashChange = () => setView(viewFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     if (cancelledCheckout) setNotice('Checkout was cancelled. No seat was changed.');
@@ -66,7 +127,7 @@ export default function App() {
     try {
       const order = await readResponse(await fetch('/api/paypal/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ studentName }),
       }));
       window.location.assign(order.approvalUrl);
@@ -75,6 +136,12 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  // Card 01 starts with the class of the newest order in the ledger, or stays empty.
+  const newestClass = latestClassName(dashboard.transactions);
+  useEffect(() => {
+    if (!classNameEdited.current && newestClass) setStudentName(newestClass);
+  }, [newestClass]);
 
   const quota = dashboard.quotas[0];
 
@@ -85,49 +152,81 @@ export default function App() {
           <span className="brand-icon"><GraduationCap size={20} /></span><span>sentinel<span className="brand-period">.</span></span>
         </a>
         <div className="rail-label">INSTRUCTOR</div>
-        <a className="rail-link active" href="#overview">Overview</a>
-        <a className="rail-link" href="#seat-ledger">Seat ledger</a>
-        <a className="rail-link" href="#nec-demo">NEC demo</a>
+        <a className={`rail-link${view === 'dashboard' ? ' active' : ''}`} href="#overview">Overview</a>
+        <a className={`rail-link${view === 'analytics' ? ' active' : ''}`} href="#analytics">Instructor analytics</a>
         <div className="rail-bottom"><ShieldCheck size={16} /><span>Sandbox environment</span></div>
+        <a className="rail-footer" href="https://www.sentinellearning.com" target="_blank" rel="noopener noreferrer">A Sentinel Learning Inc. product</a>
       </aside>
 
       <main id="top" className="content">
         <header className="topbar">
           <span className="breadcrumb">SENTINEL <span>/</span> INSTRUCTOR WORKSPACE</span>
-          <span className="sandbox-chip"><i />PAYPAL SANDBOX</span>
+          <div className="topbar-actions">
+            <EventDrawer accessToken={accessToken} />
+            {session && <ResetDemoButton authHeaders={authHeaders} onReset={(summary) => { setNotice(summary); setLedgerVersion((version) => version + 1); }} />}
+            <ThemeSwitcher />
+            <span className="sandbox-chip"><i />PAYPAL SANDBOX</span>
+          </div>
         </header>
 
+        {view === 'analytics' ? (
+          accessToken ? (
+            <Suspense fallback={<div className="grid-empty">Loading analytics…</div>}>
+              <InstructorAnalytics accessToken={accessToken} assistantAvailable={dashboard.analyticsAssistantAvailable} seatAgentAvailable={dashboard.agentAvailable} />
+            </Suspense>
+          ) : (
+            <section id="analytics" className="analytics-section">
+              <div className="section-title"><div><p className="eyebrow">YOUR ORDERS ONLY</p><h2>Instructor analytics</h2></div></div>
+              <p className="notice">Sign in on the <a href="#overview">Overview</a> page to see analytics for your orders.</p>
+            </section>
+          )
+        ) : (<>
         <section id="overview" className="intro">
           <div>
             <p className="eyebrow">FALL 2026 COHORT</p>
             <h1>Make room for <em>what's next.</em></h1>
             <p className="subhead">Seat sales, payment confirmation, and student readiness in one place.</p>
+            <p className="subhead product-line">Each seat unlocks Sentinel's NEC exam prep: the 5-Step Method on the 2026 NEC.</p>
           </div>
-          <div className="seat-counter"><span>SEATS AVAILABLE</span><strong>{quota?.seatsAvailable ?? '—'}<small> / {quota?.capacity ?? '—'}</small></strong></div>
+          <div className="seat-counter">
+            <span>SEATS REMAINING</span>
+            <strong>{quota?.seatsRemaining ?? '—'}<small> / {quota?.classSize ?? '—'}</small></strong>
+            {quota?.seatsReserved > 0 && <em className="seat-pill pending">{quota.seatsReserved} awaiting payment</em>}
+          </div>
         </section>
 
         <section className="checkout-band" aria-label="Sandbox seat checkout">
           <div className="checkout-copy"><span className="checkout-marker">01</span><div><strong>Unlock one cohort seat</strong><span>$49.00 USD · sandbox checkout · capture on approval</span></div></div>
-          <form className="checkout-form" onSubmit={beginCheckout}>
-            <label className="sr-only" htmlFor="student-name">Student name</label>
-            <input id="student-name" value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="Student name" maxLength="80" required />
-            <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable || quota?.seatsAvailable === 0}>
+          {!session ? (
+          // Keyed so React mounts fresh inputs when the session arrives: reused, the sign-in email
+          // <input> became the class name <input> and kept a password manager's autofilled email.
+          <form key="sign-in" className="checkout-form" onSubmit={signIn}>
+            <label className="sr-only" htmlFor="account-email">Email</label>
+            <input id="account-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" autoComplete="email" required />
+            <label className="sr-only" htmlFor="account-password">Password</label>
+            <input id="account-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" autoComplete="current-password" minLength="6" required />
+            <button className="checkout-button" type="submit" disabled={busy || !supabase}>Sign in</button>
+            <button className="checkout-button" type="button" onClick={signUp} disabled={busy || !supabase || !email || password.length < 6}>Create account</button>
+          </form>
+          ) : (
+          <form key="checkout" className="checkout-form" onSubmit={beginCheckout}>
+            <label className="sr-only" htmlFor="class-name">Class name</label>
+            <input id="class-name" value={studentName} onChange={(event) => { classNameEdited.current = true; setStudentName(event.target.value); }} name="class-name" placeholder="Class name" autoComplete="off" maxLength="80" required />
+            <button className="checkout-button" type="submit" disabled={busy || !dashboard.paymentAvailable}>
               {busy ? 'Processing…' : dashboard.paymentAvailable ? 'Buy one seat' : 'Add sandbox credentials'}
               <ArrowUpRight size={16} />
             </button>
           </form>
+          )}
         </section>
         {notice && <p className="notice" role="status">{notice}</p>}
+        {session && <AgentPanel authHeaders={authHeaders} available={dashboard.agentAvailable} refundAvailable={dashboard.refundAvailable} />}
 
         <section id="seat-ledger" className="ledger-section">
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>
           <SeatTable transactions={dashboard.transactions} quotas={dashboard.quotas} students={dashboard.students} />
         </section>
-
-        <section id="nec-demo" className="nec-section">
-          <div className="section-title"><div><p className="eyebrow">REFERENCE FLOW / SAMPLE DATA</p><h2>NEC lookup demo</h2></div></div>
-          <NecDemo />
-        </section>
+        </>)}
         <footer>Payments route only to PayPal Sandbox. Seat counts update only after a completed, verified capture.</footer>
       </main>
     </div>

@@ -1,19 +1,61 @@
 import { randomUUID } from 'node:crypto';
-import {
-  assertSeatAvailable,
-  discardPendingOrder,
-  findTransactionByOrderId,
-  getPendingOrder,
-  recordPendingOrder,
-  unlockSeatsFromVerifiedCapture,
-} from './seatUnlock.js';
-import { getPaypalOrder, grantSentinelVoltAccess, savePaypalOrder } from './supabase.js';
+import { MAX_SEATS_PER_ORDER } from './config.js';
+import { money, tidyClassName } from './seatUnlock.js';
+import { getPaypalOrder, getPaypalOrderByCaptureId, grantSeatAccess, logAgentAction, revokeSeatAccess, savePaypalOrder } from './supabase.js';
 
 const SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 const CURRENCY = 'USD';
 const SEAT_PRICE = '49.00';
 const COHORT_ID = 'sentinel-fall-2026';
+export const SEAT_PRICING = Object.freeze({ unitPrice: SEAT_PRICE, currency: CURRENCY });
 let tokenCache;
+
+export function seatOrderTotal(quantity) {
+  return ((Math.round(Number(SEAT_PRICE) * 100) * quantity) / 100).toFixed(2);
+}
+
+export function assertSeatQuantity(quantity) {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_SEATS_PER_ORDER) {
+    throw Object.assign(new Error(`Quantity must be a whole number from 1 to ${MAX_SEATS_PER_ORDER}.`), { statusCode: 400 });
+  }
+}
+
+// Checks a PayPal capture against the stored paypal_orders row before any seat is granted.
+function assertStoredOrderPrice(order) {
+  const expectedTotal = seatOrderTotal(Number(order.quantity ?? 1));
+  if (money(order.amount) !== expectedTotal || order.currency !== CURRENCY) {
+    throw Object.assign(new Error('The stored seat order does not match the fixed seat price.'), { statusCode: 409 });
+  }
+  return expectedTotal;
+}
+
+export function verifyCaptureForOrder(order, capture) {
+  if (capture.status !== 'COMPLETED' || !capture.captureId) {
+    throw Object.assign(new Error('A completed PayPal capture is required before unlocking seats.'), { statusCode: 409 });
+  }
+  const expectedTotal = assertStoredOrderPrice(order);
+  if (money(capture.amount) !== expectedTotal || capture.currency !== CURRENCY) {
+    throw Object.assign(new Error('Capture amount or currency does not match the seat order.'), { statusCode: 409 });
+  }
+  return { ...capture, amount: expectedTotal, currency: CURRENCY };
+}
+
+function completedTransaction(order, capture) {
+  return {
+    orderId: order.paypal_order_id,
+    captureId: capture.captureId,
+    studentName: tidyClassName(order.student_name),
+    quantity: Number(order.quantity ?? 1),
+    amount: money(order.amount),
+    currency: order.currency,
+    status: 'COMPLETED',
+  };
+}
+
+function storedCapture(order) {
+  const payment = Array.isArray(order.paypal_payments) ? order.paypal_payments[0] : order.paypal_payments;
+  return { captureId: payment?.capture_id ?? '' };
+}
 
 function configuration() {
   const { PAYPAL_CLIENT_ID, PAYPAL_SECRET } = process.env;
@@ -34,6 +76,11 @@ function configuration() {
   }
 
   return { clientId: PAYPAL_CLIENT_ID, secret: PAYPAL_SECRET };
+}
+
+// Throws unless PayPal is configured for the sandbox (the only environment this app allows).
+export function assertSandbox() {
+  configuration();
 }
 
 export function isPaypalConfigured() {
@@ -101,15 +148,17 @@ async function getAccessToken() {
   return tokenCache.value;
 }
 
-export async function createSandboxOrder({ studentName, userId }) {
-  const normalizedName = typeof studentName === 'string' ? studentName.trim().slice(0, 80) : '';
+export async function createSandboxOrder({ studentName, userId, quantity = 1 }) {
+  // The field is still called studentName on the wire; it holds the class name the seats are for.
+  const normalizedName = tidyClassName(studentName).slice(0, 80);
   if (!normalizedName) {
-    throw Object.assign(new Error('Enter a student name before starting checkout.'), { statusCode: 400 });
+    throw Object.assign(new Error('Enter a class name before starting checkout.'), { statusCode: 400 });
   }
   if (!userId) {
     throw Object.assign(new Error('A verified Supabase account is required to start checkout.'), { statusCode: 401 });
   }
-  assertSeatAvailable();
+  assertSeatQuantity(quantity);
+  const total = seatOrderTotal(quantity);
 
   const appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
   const order = await paypalFetch('/v2/checkout/orders', {
@@ -121,18 +170,18 @@ export async function createSandboxOrder({ studentName, userId }) {
         reference_id: COHORT_ID,
         custom_id: userId,
         invoice_id: `SENTINEL-${randomUUID()}`,
-        description: 'One instructor course seat',
+        description: quantity === 1 ? 'One instructor course seat' : `${quantity} instructor course seats`,
         amount: {
           currency_code: CURRENCY,
-          value: SEAT_PRICE,
+          value: total,
           breakdown: {
-            item_total: { currency_code: CURRENCY, value: SEAT_PRICE },
+            item_total: { currency_code: CURRENCY, value: total },
           },
         },
         items: [{
           name: 'Course seat',
           description: 'One seat in the Sentinel Fall 2026 cohort',
-          quantity: '1',
+          quantity: String(quantity),
           unit_amount: { currency_code: CURRENCY, value: SEAT_PRICE },
           category: 'DIGITAL_GOODS',
         }],
@@ -163,71 +212,60 @@ export async function createSandboxOrder({ studentName, userId }) {
     throw Object.assign(new Error('PayPal returned a non-sandbox approval URL; checkout was stopped.'), { statusCode: 502 });
   }
 
-  const pendingOrder = {
+  await savePaypalOrder({
     orderId: order.id,
     userId,
     studentName: normalizedName,
-    cohortId: COHORT_ID,
-    amount: SEAT_PRICE,
+    quantity,
+    amount: total,
     currency: CURRENCY,
-  };
-  recordPendingOrder(pendingOrder);
-  try {
-    await savePaypalOrder(pendingOrder);
-  } catch (error) {
-    discardPendingOrder(order.id);
-    throw error;
-  }
-  return { orderId: order.id, approvalUrl: approvalUrl.toString() };
+  });
+  return { orderId: order.id, approvalUrl: approvalUrl.toString(), quantity, amount: total, currency: CURRENCY };
 }
 
+// Reads the order from Supabase, so capture works after a server restart. The grant function
+// marks the order completed and writes paypal_payments in one transaction, and returns early
+// for a capture it has already recorded, so repeats never grant twice.
 export async function captureSandboxOrder(orderId, userId) {
-  const existing = findTransactionByOrderId(orderId);
-  if (existing) {
-    if (existing.userId !== userId) {
-      throw Object.assign(new Error('This PayPal order does not belong to the authenticated account.'), { statusCode: 403 });
-    }
-    await grantSentinelVoltAccess({
-      userId: existing.userId,
-      orderId,
-      captureId: existing.captureId,
-      status: existing.status,
-      amount: existing.amount,
-      currency: existing.currency,
-    });
-    return { transaction: existing, alreadyCaptured: true };
-  }
-
-  const pendingOrder = getPendingOrder(orderId);
-  if (!pendingOrder) {
-    throw Object.assign(new Error('No pending Sentinel seat order matches this PayPal order.'), { statusCode: 404 });
-  }
-  if (pendingOrder.userId !== userId) {
+  const order = await getPaypalOrder(orderId);
+  if (order.user_id !== userId) {
     throw Object.assign(new Error('This PayPal order does not belong to the authenticated account.'), { statusCode: 403 });
   }
+  if (order.status === 'COMPLETED') {
+    return { transaction: completedTransaction(order, storedCapture(order)), alreadyCaptured: true };
+  }
+  assertStoredOrderPrice(order);
 
-  const captureResponse = await paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
-    method: 'POST',
-    headers: { 'PayPal-Request-Id': randomUUID(), Prefer: 'return=representation' },
-    body: JSON.stringify({}),
-  });
+  let captureResponse;
+  try {
+    // A fixed request ID makes PayPal return the original result for a repeated capture.
+    captureResponse = await paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
+      method: 'POST',
+      headers: { 'PayPal-Request-Id': `sentinel-capture-${orderId}`, Prefer: 'return=representation' },
+      body: JSON.stringify({}),
+    });
+  } catch (error) {
+    // A concurrent capture or webhook may have completed the order first.
+    const latest = await getPaypalOrder(orderId);
+    if (latest.status === 'COMPLETED') {
+      return { transaction: completedTransaction(latest, storedCapture(latest)), alreadyCaptured: true };
+    }
+    throw error;
+  }
   const completedCapture = captureResponse.purchase_units?.flatMap((unit) => unit.payments?.captures || [])
     .find((item) => item.status === 'COMPLETED');
   if (captureResponse.status !== 'COMPLETED' || !completedCapture) {
     throw Object.assign(new Error('PayPal has not confirmed a completed capture; no seat was unlocked.'), { statusCode: 409 });
   }
 
-  const capture = {
-    orderId,
+  const capture = verifyCaptureForOrder(order, {
     captureId: completedCapture.id,
     status: completedCapture.status,
     amount: completedCapture.amount?.value,
     currency: completedCapture.amount?.currency_code,
-    source: 'orders-api',
-  };
-  const transaction = unlockSeatsFromVerifiedCapture(capture);
-  await grantSentinelVoltAccess({ userId: pendingOrder.userId, ...capture });
-  return { transaction, alreadyCaptured: false };
+  });
+  await grantSeatAccess({ userId: order.user_id, orderId, ...capture });
+  return { transaction: completedTransaction(order, capture), alreadyCaptured: false };
 }
 
 export async function verifySandboxWebhook(event, headers, rawBody) {
@@ -252,4 +290,70 @@ export async function verifySandboxWebhook(event, headers, rawBody) {
     rawJsonBody: `${verificationMetadata.slice(0, -1)},"webhook_event":${rawEvent}}`,
   });
   return verification.verification_status === 'SUCCESS';
+}
+
+// Refunds one of the signed-in instructor's completed captures in full, through PayPal's Captures
+// Refund API (POST /v2/payments/captures/{capture_id}/refund, Payments v2). Only the Confirm click
+// reaches this: the seat assistant can propose a refund but never issue one. The capture must be
+// the caller's own and still COMPLETED, and the amount is always the recorded capture amount.
+// A fixed PayPal-Request-Id makes a repeated click return the original refund. When PayPal answers
+// COMPLETED the seats are revoked here, so the ledger changes at once; the PAYMENT.CAPTURE.REFUNDED
+// webhook that follows answers alreadyRevoked (server/webhook.js), and if the refund stays PENDING
+// the webhook revokes once PayPal completes it.
+export async function refundSandboxCapture({ captureId, userId }) {
+  if (typeof captureId !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(captureId)) {
+    throw Object.assign(new Error('A PayPal capture ID is required.'), { statusCode: 400 });
+  }
+  if (!userId) {
+    throw Object.assign(new Error('A verified Supabase account is required to refund a capture.'), { statusCode: 401 });
+  }
+  const match = await getPaypalOrderByCaptureId(captureId);
+  if (!match || match.order.user_id !== userId) {
+    await logAgentAction({ userId, action: 'refund_rejected', details: { captureId, reason: match ? 'different account' : 'unknown capture' } });
+    throw Object.assign(new Error('No completed seat order of yours matches this capture.'), { statusCode: match ? 403 : 404 });
+  }
+  const { order, payment } = match;
+  if (payment.status !== 'COMPLETED' || order.status !== 'COMPLETED') {
+    await logAgentAction({ userId, action: 'refund_rejected', details: { captureId, reason: `payment ${payment.status}, order ${order.status}` } });
+    throw Object.assign(new Error('Only a completed, not yet refunded seat order can be refunded.'), { statusCode: 409 });
+  }
+  const amount = money(payment.amount);
+  const currency = payment.currency;
+
+  let refund;
+  try {
+    refund = await paypalFetch(`/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, {
+      method: 'POST',
+      headers: { 'PayPal-Request-Id': `sentinel-refund-${captureId}`, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        amount: { value: amount, currency_code: currency },
+        note_to_payer: `Refund of ${order.quantity ?? 1} seat(s) for ${tidyClassName(order.student_name)}`,
+      }),
+    });
+  } catch (error) {
+    await logAgentAction({ userId, action: 'refund_failed', details: { captureId, reason: error.message } });
+    throw error;
+  }
+  if (typeof refund.id !== 'string' || !refund.id) {
+    throw Object.assign(new Error('PayPal sandbox did not return a refund ID.'), { statusCode: 502 });
+  }
+
+  const result = {
+    refundId: refund.id,
+    status: refund.status ?? 'UNKNOWN',
+    captureId,
+    orderId: order.paypal_order_id,
+    amount,
+    currency,
+    quantity: Number(order.quantity ?? 1),
+    className: tidyClassName(order.student_name),
+    revoked: false,
+  };
+  await logAgentAction({ userId, action: 'refund_issued', details: { captureId, refundId: refund.id, status: result.status, amount, currency } });
+  if (refund.status === 'COMPLETED') {
+    const outcome = await revokeSeatAccess({ userId, orderId: order.paypal_order_id, captureId, refundId: refund.id, amount, currency });
+    result.revoked = true;
+    result.alreadyRevoked = outcome === 'already_revoked';
+  }
+  return result;
 }
