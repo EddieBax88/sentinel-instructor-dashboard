@@ -23,7 +23,7 @@ Legend: **[KEY]** = needs `ANTHROPIC_API_KEY` set on Vercel (Ask AI and the Stud
 | 1:05 | "Back in the app the capture is confirmed server-side and the seats unlock." | The app returns to Overview; the notice reads "Payment captured. 12 seats unlocked for fall class." Seats remaining reads 18 / 30; the Transactions grid shows COMPLETED in green. |
 | 1:15 | "Every PayPal webhook is signature-verified and shown live." | Top bar: **PayPal events**. The drawer lists "Payment captured" with the amount and order ID. Close it. |
 | 1:25 | "Analytics are per instructor and built on AG Studio. Our custom Seat agent sits next to Studio's own agents." **[KEY]** | Sidebar: **Instructor analytics** > **Ask AI**. Click the chip **Buy 5 seats for the fall class** under the input, then send. Watch "Delegated to Seat agent", then the proposal bar above the report. Click **Dismiss** (or Confirm and pay again if time allows). |
-| 1:50 | "Ask AI builds the report too." **[KEY]** | Click the chip **Revenue by class as a column chart**, send. The chart appears in 10 to 25 seconds, in the current theme's palette. |
+| 1:50 | "Ask AI builds the report too." **[KEY]** | Click the chip **Revenue by class as a column chart**, send. The chart appears in about 15 seconds, in the current theme's palette. |
 | 2:10 | "Refunds go through the same assistant, and the same human gate." | Sidebar **Overview**. Click the chip **Refund my last seat order**, then **Send**. The reply names the capture and amount; the red-edged bar shows **Capture … · 12 seats · USD 588.00 full refund**. |
 | 2:25 | "Only this click moves money back." | Click **Confirm refund**. The chat says "Refund … issued for USD 588.00. 12 seats for fall class revoked." The grid shows REFUNDED in red, Student readiness says "Seat revoked", Seats remaining is back to 30 / 30. |
 | 2:40 | "And the verified refund webhook lands in the drawer." **[WEBHOOK]** | Top bar: **PayPal events** shows "Payment refunded". |
@@ -33,7 +33,7 @@ Without the key: skip 1:25 and 1:50; the Overview assistant covers the buy and t
 
 ## If something stalls
 
-- Ask AI turn takes longer than 25 seconds: wait for the progress bar; the proxy retries a stalled turn once on its own. Do not resend.
+- Ask AI turn takes much longer than 15 seconds: wait for the progress bar; the proxy retries a stalled turn once on its own. Do not resend.
 - PayPal return page shows "Confirming capture…" for more than a few seconds: the capture endpoint is waiting on PayPal; the webhook path will unlock the seats even if the tab is closed.
 - "Refund my last seat order" answers that there is no paid order: the last paid order was already refunded or none was captured yet. Buy first.
 - Refund does not appear in the drawer within 10 seconds: PayPal webhooks can take up to a minute in Sandbox. Open the drawer again (it polls every 5 seconds while open). The seats are already revoked by the Confirm; the drawer entry only needs the webhook.
