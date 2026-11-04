@@ -2,11 +2,13 @@
 
 Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 
-## Repo state (Nov 4, 2026, after the seat assistant moved to Claude)
+## Repo state (Nov 4, 2026, after PR #3 and the demo video)
 
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
 - **PR #1 is merged** (Nov 4, merge commit `94e634d`, a merge commit, not a squash, on Eddie's instruction). `main` now carries the full branch; `LICENSE` (MIT) is at its root and the GitHub API reports the repo license as `MIT`. The branch was kept: Vercel Production still deploys from it. Any further work goes on the branch and needs a new PR into `main`.
-- **Devpost draft: complete except the video.** `SUBMISSION.md` holds every field; `DEMO-SCRIPT.md` is the click path.
+- **PR #3 is merged** (Nov 4, merge commit `b969b2b`): the seat assistant on Claude Sonnet 5.5 with hard timeouts. The branch stays as Vercel's production source.
+- **Demo video: recorded and public** (https://youtu.be/FkZfwHiJv8k); linked in `SUBMISSION.md` and `README.md`.
+- **Devpost draft: complete, video included.** `SUBMISSION.md` holds every field; `DEMO-SCRIPT.md` is the click path.
 - **cloudflared.deb and the old names stay in git history by decision** (Nov 4): no history rewrite, no force-push.
 - Commits this session, oldest first (each pushed, deployed READY, health `ok` with that commit):
   - `f1333e0` Seat math: pending orders no longer reduce the seats remaining; header pill "N awaiting payment"; `/api/health` reports the commit.
@@ -50,8 +52,8 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 - Node: `engines.node` is `22.x`. `npm ci` is required on a fresh clone (the session container started without `node_modules`).
 - Hosted demo: https://sentinel-hackathon-demo-mu.vercel.app (Vercel Hobby, project `sentinel-hackathon-demo`).
 - Migrations applied to the hackathon Supabase project: the first five, plus (per the mission brief) `20261102000000_refunds_and_seat_revoke.sql`.
-- Migration written, NOT applied: `20261103000000_refund_agent_actions.sql` (adds `refund_proposed`, `refund_issued`, `refund_failed`, `refund_rejected`, `demo_reset` to the `agent_actions` check). Until applied, those five actions are not logged (the server warns; the refund and the reset still work).
-- PayPal sandbox webhook: `PAYMENT.CAPTURE.COMPLETED` verified live. `PAYMENT.CAPTURE.REFUNDED` still not on the subscription (owner decision 2). The Confirm-gated refund revokes seats itself when PayPal answers COMPLETED, so the demo works without it; the drawer's "Payment refunded" entry needs it.
+- Migration `20261103000000_refund_agent_actions.sql`: **applied** in the hackathon Supabase project (done, per Eddie, Nov 4). Refund and reset actions are now logged to `agent_actions`.
+- PayPal sandbox webhook: `PAYMENT.CAPTURE.COMPLETED` verified live. `PAYMENT.CAPTURE.REFUNDED` is on the subscription and events are arriving (done, per Eddie, Nov 4).
 
 ## Ask AI live measurements, Nov 3
 
@@ -77,9 +79,9 @@ Measured by Eddie on production from the `STUDIO_AI_TIMING` log rows. Effort `lo
 
 ## Owner decisions needed
 
-1. **Apply `20261103000000_refund_agent_actions.sql`** in the hackathon project's SQL editor (one transaction, safe to re-run). Until then refund and reset actions are not written to `agent_actions`.
-2. **Add `PAYMENT.CAPTURE.REFUNDED` to the PayPal sandbox webhook subscription** (developer.paypal.com > Apps & Credentials > the sandbox app > Webhooks > edit the `<demo URL>/api/paypal/webhook` subscription). The agent-driven refund already revokes seats on Confirm; this only adds the "Payment refunded" drawer entry and the webhook's alreadyRevoked path, both untested live.
-3. **Live test the refund path** once: buy, then "Refund my last seat order" > Confirm, in the hosted demo with real sandbox credentials. Built and browser-tested against fakes only (this session had no PayPal access).
+1. **Done:** `20261103000000_refund_agent_actions.sql` applied in the hackathon Supabase project.
+2. **Done:** `PAYMENT.CAPTURE.REFUNDED` is on the PayPal sandbox webhook subscription; events are arriving.
+3. **Done:** live refunds tested on the hosted demo with sandbox credentials (Nov 3).
 4. **Refund revoke timing.** The Confirm endpoint revokes seats immediately when PayPal answers COMPLETED and leaves a PENDING refund to the webhook. If you want webhook-only revoke, delete the `revokeSeatAccess` call in `refundSandboxCapture` (`server/paypal.js`); the tests in `server/refundCapture.test.js` then need the `revoked` expectations flipped.
 5. **Demo reset is not one transaction.** It deletes table by table (entitlements, payments, orders, proposals, events, actions), each filtered to the signed-in user; a failure part-way is a 502 and a second click finishes. A single SQL function would be atomic but needs another migration; say if you want that.
 6. **Judge test account.** Still none created or written anywhere. SUBMISSION.md says to put credentials in the form, not the repo.
@@ -115,7 +117,6 @@ Node/Express server + React/Vite client, Supabase (auth + Postgres), PayPal Sand
 
 ## Not yet verified live
 
-- Refund to seat revoke (see Owner decisions 1 and 2).
 - Ask AI on Claude: the 10 s first-content retry and a refusal as a clean 422 are tested against fakes only; the Nov 3 runs did not report either.
 - `npm run time:ask-ai` (headless harness) hung on Eddie's machine before the 5-minute timeout was added; not debugged. Still times the NVIDIA baseline path, not the app's Claude path.
 - The seat assistant's 504 on a stalled Claude call is tested against fakes only; no stall was seen live.
@@ -186,11 +187,9 @@ Tools are sent without `strict: true`. Live on Nov 3, the chosen model (Sonnet 5
 
 ## Remaining (in order)
 
-Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); Devpost draft complete except the video.
+Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); live refunds tested (Nov 3); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); seat assistant on Claude, checked live, PR #3 merged (Nov 4); owner decisions 1 to 3 (agent-actions migration applied, `PAYMENT.CAPTURE.REFUNDED` events arriving, live refunds); demo video recorded and public (https://youtu.be/FkZfwHiJv8k). `NVIDIA_API_KEY` stays in Vercel by decision.
 
-1. **Seat assistant on the live site:** done on Claude (Nov 4, "Live check, Nov 4"). Optional: one look from Eddie's own browser before recording.
-2. Record the video from `DEMO-SCRIPT.md`, upload, paste the link into `SUBMISSION.md`.
-3. Delete the test users `hackathon-signup-test@example.com` and `hackathon-live-check-nov4@example.com`, and the leftover branch `ccr-90064225-vddchi` (owner decision 10).
-4. Owner decisions 1 to 3 (agent-actions migration, refund webhook event, one live refund).
-5. AG Studio trial license (~Nov 5).
-6. Right before submission: scrub git history of the old demo, old product names and cloudflared.deb, keeping commit dates (owner).
+Remaining for Eddie:
+
+1. Delete the leftover branch `ccr-90064225-vddchi` (owner decision 10).
+2. Start the AG Studio trial license on Nov 5.

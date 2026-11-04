@@ -688,3 +688,9 @@ test('with the real Anthropic SDK against a local SSE server: stalled first try 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('SCOPE_NOTE tells the lead to delegate seat requests to the Seat agent first, with nothing before it', () => {
+  const request = buildAnthropicRequest({ messages: [{ role: 'user', content: 'Buy 5 seats for the fall class' }] });
+  const scope = request.system[0].text;
+  assert.match(scope, /For any request to buy, order, price or refund seats, call delegate_to with type "seat" as your first action, with no other tool calls or commentary before it\./);
+});
