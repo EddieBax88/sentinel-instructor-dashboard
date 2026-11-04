@@ -1,6 +1,7 @@
 import { ClientSideRowModelModule, ModuleRegistry, themeQuartz } from 'ag-grid-community';
 import { AgGridReact } from 'ag-grid-react';
 import { statusClass } from './statusClass.js';
+import { LOADING_TEXT } from './agentAvailability.js';
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -66,12 +67,14 @@ function GridTable({ rows, columns, emptyText }) {
   ) : <div className="grid-empty">{emptyText}</div>;
 }
 
-export default function SeatTable({ transactions, quotas, students }) {
+// loading: the first fetch has not finished, so empty tables say Loading… rather than their empty text.
+export default function SeatTable({ transactions, quotas, students, loading = false }) {
+  const empty = (text) => (loading ? LOADING_TEXT : text);
   return (
     <div className="tables-stack">
-      <section className="table-block"><div className="table-heading"><h3>Transactions</h3><span>{transactions.length} orders</span></div><GridTable rows={transactions} columns={transactionColumns} emptyText="No seat orders yet." /></section>
-      <section className="table-block"><div className="table-heading"><h3>Class seats</h3><span>Default class size</span></div><GridTable rows={quotas} columns={quotaColumns} emptyText="Quota data unavailable." /></section>
-      <section className="table-block"><div className="table-heading"><h3>Student readiness</h3><span>{students.length} students</span></div><GridTable rows={students} columns={studentColumns} emptyText="Students appear here when a seat order starts." /></section>
+      <section className="table-block"><div className="table-heading"><h3>Transactions</h3><span>{transactions.length} orders</span></div><GridTable rows={transactions} columns={transactionColumns} emptyText={empty('No seat orders yet.')} /></section>
+      <section className="table-block"><div className="table-heading"><h3>Class seats</h3><span>Default class size</span></div><GridTable rows={quotas} columns={quotaColumns} emptyText={empty('Quota data unavailable.')} /></section>
+      <section className="table-block"><div className="table-heading"><h3>Student readiness</h3><span>{students.length} students</span></div><GridTable rows={students} columns={studentColumns} emptyText={empty('Students appear here when a seat order starts.')} /></section>
     </div>
   );
 }

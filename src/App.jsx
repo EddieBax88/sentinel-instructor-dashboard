@@ -2,6 +2,7 @@ import { ArrowUpRight, GraduationCap, ShieldCheck } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AgentPanel from './components/AgentPanel.jsx';
+import { agentAvailability, dashboardLoaded } from './components/agentAvailability.js';
 import EventDrawer from './components/EventDrawer.jsx';
 import ResetDemoButton from './components/ResetDemoButton.jsx';
 import SeatTable from './components/SeatTable.jsx';
@@ -34,6 +35,7 @@ export default function App() {
   // Set once the instructor types in Card 01, so the 3-second ledger poll never overwrites them.
   const classNameEdited = useRef(false);
   const accessToken = session?.access_token;
+  const dashboardReady = dashboardLoaded(dashboard, accessToken);
   const orderFromReturn = new URLSearchParams(window.location.search).get('token');
   const cancelledCheckout = new URLSearchParams(window.location.search).get('checkout') === 'cancelled';
 
@@ -45,7 +47,7 @@ export default function App() {
         const ledger = accessToken
           ? await readResponse(await fetch('/api/ledger', { headers: { Authorization: `Bearer ${accessToken}` } }))
           : EMPTY_LEDGER;
-        if (active) setDashboard({ ...flags, ...ledger });
+        if (active) setDashboard({ ...flags, ...ledger, loaded: true, loadedFor: accessToken || null });
       } catch (error) {
         if (active) setNotice(error.message);
       }
@@ -220,11 +222,11 @@ export default function App() {
           )}
         </section>
         {notice && <p className="notice" role="status">{notice}</p>}
-        {session && <AgentPanel authHeaders={authHeaders} available={dashboard.agentAvailable} refundAvailable={dashboard.refundAvailable} />}
+        {session && <AgentPanel authHeaders={authHeaders} availability={agentAvailability({ loaded: dashboardReady, agentAvailable: dashboard.agentAvailable })} refundAvailable={dashboard.refundAvailable} />}
 
         <section id="seat-ledger" className="ledger-section">
           <div className="section-title"><div><p className="eyebrow">LIVE COHORT LEDGER</p><h2>Seat activity</h2></div><span className="live-tag"><i />LIVE</span></div>
-          <SeatTable transactions={dashboard.transactions} quotas={dashboard.quotas} students={dashboard.students} />
+          <SeatTable loading={!dashboardReady} transactions={dashboard.transactions} quotas={dashboard.quotas} students={dashboard.students} />
         </section>
         </>)}
         <footer>Payments route only to PayPal Sandbox. Seat counts update only after a completed, verified capture.</footer>
