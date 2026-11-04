@@ -7,7 +7,7 @@ import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS } from './config.js';
 import { STUDIO_AI_DEFAULT_MODEL, STUDIO_AI_EFFORT } from './config.js';
 import {
   buildAnthropicRequest, buildNvidiaRequest, completeAnthropicTurn, completeTurn, createStudioAiRouter, describeAnthropicTurn,
-  describeTurn, latestToolResults, REFUSAL_MESSAGE, sanitizeCompletion, STUDIO_TOOL_NAMES, toStudioReply,
+  describeTurn, latestToolResults, REFUSAL_MESSAGE, sanitizeCompletion, STUDIO_TOOL_NAMES, TIMEOUT_MESSAGE, toStudioReply,
 } from './studioAi.js';
 
 const FAKE_KEY = 'sk-ant-test-key-that-must-never-reach-the-browser';
@@ -132,7 +132,7 @@ function fakeAnthropic(script = []) {
     messages: {
       stream: (body, options = {}) => {
         const step = script[calls.length];
-        calls.push({ body, signal: options.signal });
+        calls.push({ body, signal: options.signal, timeout: options.timeout });
         claudeCalls.push(structuredClone(body));
         if (step instanceof Error) throw step;
         const message = claudeReply(body, calls.length);
@@ -143,9 +143,9 @@ function fakeAnthropic(script = []) {
   };
 }
 
-async function post(body, { token = 'valid-token', client = () => fakeAnthropic(), firstChunkTimeoutMs } = {}) {
+async function post(body, { token = 'valid-token', client = () => fakeAnthropic(), firstChunkTimeoutMs, turnTimeoutMs } = {}) {
   const app = express();
-  app.use('/api/studio-ai', createStudioAiRouter({ client, firstChunkTimeoutMs }));
+  app.use('/api/studio-ai', createStudioAiRouter({ client, firstChunkTimeoutMs, turnTimeoutMs }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   try {
@@ -368,7 +368,7 @@ function stallingClient(script) {
       completions: {
         create: async (body, options = {}) => {
           const step = script[calls.length];
-          calls.push({ body, signal: options.signal });
+          calls.push({ body, signal: options.signal, timeout: options.timeout });
           if (step instanceof Error) throw step;
           const reply = completion({ content: `reply ${calls.length}` });
           return step === 'stall'
@@ -594,15 +594,52 @@ test('Claude turn: no content by the first-token timeout is aborted and sent onc
   assert.equal(result.latencyMs, result.firstAttemptMs + result.retryMs);
 });
 
-test('Claude turn: once content is flowing it is never aborted, however long it runs', async () => {
+test('Claude turn: once content is flowing the first-token timer no longer applies; only the hard deadline does', async () => {
   claudeReply = () => claudeMessage([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }, { type: 'text', text: 'c' }]);
   const client = fakeAnthropic([{ firstMs: 5, gapMs: 80 }]);
-  const result = await completeAnthropicTurn(client, buildAnthropicRequest(leadBody()), { firstChunkTimeoutMs: 100 });
+  const result = await completeAnthropicTurn(client, buildAnthropicRequest(leadBody()), { firstChunkTimeoutMs: 100, turnTimeoutMs: 5000 });
   assert.equal(client.calls.length, 1);
   assert.equal(client.calls[0].signal.aborted, false);
+  assert.equal(client.calls[0].timeout, 5000, 'the SDK gets the same deadline as its request timeout');
   assert.equal(result.retried, false);
   assert.ok(result.latencyMs >= 159, `ran ${result.latencyMs} ms past the 100 ms timeout`);
   assert.ok(result.ttftMs < 100);
+});
+
+test('Claude turn: a turn that is still streaming at the hard deadline is aborted and ends as a 504', async () => {
+  claudeReply = () => claudeMessage([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }, { type: 'text', text: 'c' }]);
+  const client = fakeAnthropic([{ firstMs: 5, gapMs: 1e9 }]);
+  const started = Date.now();
+  await assert.rejects(
+    completeAnthropicTurn(client, buildAnthropicRequest(leadBody()), { firstChunkTimeoutMs: 100, turnTimeoutMs: 150 }),
+    { statusCode: 504, message: TIMEOUT_MESSAGE },
+  );
+  assert.ok(Date.now() - started < 1000, 'ended at the deadline');
+  assert.equal(client.calls.length, 1, 'a turn cut off by the hard deadline is not retried');
+  assert.equal(client.calls[0].signal.aborted, true);
+});
+
+test('Claude turn: a stalled first try and a stalled retry together end at the hard deadline as a 504', async () => {
+  const client = fakeAnthropic(['stall', 'stall']);
+  const started = Date.now();
+  await assert.rejects(
+    completeAnthropicTurn(client, buildAnthropicRequest(leadBody()), { firstChunkTimeoutMs: 40, turnTimeoutMs: 120 }),
+    { statusCode: 504 },
+  );
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed >= 100 && elapsed < 1000, `ended after ${elapsed} ms`);
+  assert.equal(client.calls.length, 2);
+  assert.ok(client.calls[1].timeout <= 80, `the retry got the time left (${client.calls[1].timeout} ms), not a fresh budget`);
+  assert.ok(client.calls.every((call) => call.signal.aborted));
+});
+
+test('the proxy answers a hard timeout with a clean 504 JSON error, never a hang', async () => {
+  claudeReply = () => claudeMessage([{ type: 'text', text: 'late' }]);
+  const started = Date.now();
+  const { status, body } = await post(leadBody(), { client: () => fakeAnthropic(['stall']), firstChunkTimeoutMs: 1000, turnTimeoutMs: 60 });
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(status, 504);
+  assert.deepEqual(body, { error: TIMEOUT_MESSAGE });
 });
 
 test('Claude turn: a slow retry runs to completion and is never retried again; model errors are not retried', async () => {

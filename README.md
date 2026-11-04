@@ -12,7 +12,7 @@ An instructor sells seats in an exam-prep class, confirms every purchase before 
 Instructor types "Buy 12 seats for my fall class"
    │
    ▼
-Seat agent (server/agent.js, NVIDIA Nemotron via the openai SDK)
+Seat agent (server/agent.js, Claude Sonnet 5.5 via the Anthropic Messages API)
    calls get_seat_pricing / get_current_seats / create_seat_order
    → a PROPOSAL only: 12 × USD 49.00 = USD 588.00. Nothing is ordered.
    │
@@ -66,7 +66,7 @@ cp .env.example .env    # fill in PayPal Sandbox and Supabase values
 npm run dev
 ```
 
-Open `http://localhost:3000`. Without PayPal credentials the dashboard loads but checkout is disabled. Without `NVIDIA_API_KEY` the seat assistant is disabled; without `ANTHROPIC_API_KEY` Ask AI is disabled. The API refuses non-sandbox PayPal hosts. Local webhooks need a public HTTPS tunnel to `/api/paypal/webhook`.
+Open `http://localhost:3000`. Without PayPal credentials the dashboard loads but checkout is disabled. Without `ANTHROPIC_API_KEY` the seat assistant and Ask AI are disabled. The API refuses non-sandbox PayPal hosts. Local webhooks need a public HTTPS tunnel to `/api/paypal/webhook`.
 
 Production build: `npm run build` then `npm start`. On Vercel the API runs as one Function (`api/index.js`, `vercel.json`); set `NODEJS_HELPERS=0` so the webhook sees the raw body.
 
@@ -82,13 +82,12 @@ Production build: `npm run build` then `npm start`. On Vercel the API runs as on
 | `SUPABASE_URL` | yes | Hackathon Supabase project URL. |
 | `SUPABASE_ANON_KEY` | yes | Publishable key, served to the browser for sign-in. |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Secret key, server only, for ledger reads and writes. |
-| `NVIDIA_API_KEY` | for the seat assistant | NVIDIA hosted API key (build.nvidia.com). |
-| `ANTHROPIC_API_KEY` | for Ask AI | Anthropic API key for the analytics assistant. |
-| `STUDIO_AI_MODEL` | no | Overrides the Ask AI model (default in `server/config.js`). |
+| `ANTHROPIC_API_KEY` | for the seat assistant and Ask AI | Anthropic API key; both assistants run on Claude through the Messages API. |
+| `STUDIO_AI_MODEL` | no | Overrides the model both assistants use (default in `server/config.js`). |
 | `STUDIO_AI_TIMING` | no | `1` logs one timing row per Ask AI model turn. |
 | `NODEJS_HELPERS` | Vercel only | `0` keeps the request body unparsed for webhook verification. |
 
-`TRIALS` and `TIMEOUT_MIN` are read only by the probe and timing scripts.
+`NVIDIA_API_KEY`, `TRIALS` and `TIMEOUT_MIN` are read only by the probe and timing scripts (`scripts/`), which keep NVIDIA's hosted model as a baseline; the app never calls NVIDIA.
 
 ## Database migrations
 
@@ -109,7 +108,7 @@ npm run test:browser     # headless Chromium: Ask AI lead → Seat agent → Con
 npm run check:strict-tools   # offline check of AG Studio's tool schemas against Anthropic's strict-mode rules
 ```
 
-`npm test` uses scripted model clients and fakes for Supabase and PayPal. `npm run test:browser` needs Playwright's Chromium once (`npx playwright install chromium`); it fakes only outside services (Supabase, NVIDIA, PayPal, the Ask AI lead's model turns).
+`npm test` uses scripted model clients and fakes for Supabase and PayPal. `npm run test:browser` needs Playwright's Chromium once (`npx playwright install chromium`); it fakes only outside services (Supabase, the Anthropic Messages API, PayPal, the Ask AI lead's model turns).
 
 ## Project structure
 
@@ -123,11 +122,13 @@ npm run check:strict-tools   # offline check of AG Studio's tool schemas against
 
 ## How AI is used
 
-**Seat assistant.** The server calls NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`, `server/config.js`) on NVIDIA's hosted OpenAI-compatible endpoint with standard function calling. Three tools, all in `server/agent.js` on top of the checkout code: `get_seat_pricing`, `get_current_seats` (the caller's own orders only), and `create_seat_order(quantity, class_name)`, which validates and returns a proposal without calling PayPal. The PayPal Agent Toolkit was not used: its `create_order` takes order details from the model, and here price and order creation are fixed on the server.
+**Seat assistant.** The server calls Claude Sonnet 5.5 (`claude-sonnet-5-5`, effort `low`, the same model and effort as Ask AI, `server/config.js`) through the Anthropic Messages API with tool use. Four tools, all in `server/agent.js` on top of the checkout code: `get_seat_pricing`, `get_current_seats` (the caller's own orders only), `create_seat_order(quantity, class_name)`, which validates and returns a proposal without calling PayPal, and `propose_refund`, which prepares a refund proposal without calling PayPal. The model's thinking blocks are passed back on tool use, as the API requires, and never reach the reply. The PayPal Agent Toolkit was not used: its `create_order` takes order details from the model, and here price and order creation are fixed on the server.
+
+The seat assistant ran on NVIDIA's hosted Nemotron 3 Ultra until Nov 4, 2026, when NVIDIA's free endpoint stalled during generation and three `/api/agent/chat` requests ran to Vercel's 300-second function limit with nothing logged before. It was moved to Claude, which already served Ask AI with 0 failed tool calls, and every model call in both assistants now carries a hard deadline: 20 s per seat-assistant call and 40 s for all calls of one request, 45 s for one Ask AI turn (`server/config.js`). A call that outlives its deadline is aborted and the request answers `504` with a plain JSON error ("The seat assistant took too long. Please try again."), never a hang. `server/nvidia.js` and the NVIDIA request builders remain only for the probe and timing scripts.
 
 **Guardrails.** Quantity is a whole number from 1 to 200, checked on the server. Off-topic requests are declined by the prompt and, in code, by discarding any tool-free reply that is not about seats (`off_topic_blocked`). Every request is tied to the verified Supabase user; a proposal can be confirmed only by its creator, once, within 10 minutes. The browser can send only plain-text turns. Each action is logged to `agent_actions`.
 
-**Ask AI (AG Studio Agent Framework).** On Instructor analytics, Ask AI opens Studio's assistant beside the report. It runs on Claude Sonnet 5.5 (`claude-sonnet-5-5`, effort `low`, `server/config.js`), chosen after a live comparison with Claude Haiku 5.5 on tool-call validity (Sonnet 0 failed tool calls, Haiku 2; details in HANDOFF.md). Turns go through `POST /api/studio-ai/chat` (`server/studioAi.js`), which requires the signed-in token, translates Chat Completions-shaped turns to the Anthropic Messages API and back, streams with a first-content retry, drops thinking, and accepts only Studio's own tools (read schema and data, edit widgets, filters, pages, plans). It cannot create orders. `src/analytics/studioAgents.js` preloads the report, schema and page into each built-in agent and keeps replies to one sentence. Tools are sent without `strict: true` (see `npm run check:strict-tools`).
+**Ask AI (AG Studio Agent Framework).** On Instructor analytics, Ask AI opens Studio's assistant beside the report. It runs on Claude Sonnet 5.5 (`claude-sonnet-5-5`, effort `low`, `server/config.js`), chosen after a live comparison with Claude Haiku 5.5 on tool-call validity (Sonnet 0 failed tool calls, Haiku 2; details in HANDOFF.md). Turns go through `POST /api/studio-ai/chat` (`server/studioAi.js`), which requires the signed-in token, translates Chat Completions-shaped turns to the Anthropic Messages API and back, streams with a first-content retry under a 45-second hard deadline (a `504` on timeout), drops thinking, and accepts only Studio's own tools (read schema and data, edit widgets, filters, pages, plans). It cannot create orders. `src/analytics/studioAgents.js` preloads the report, schema and page into each built-in agent and keeps replies to one sentence. Tools are sent without `strict: true` (see `npm run check:strict-tools`).
 
 **Seat agent (custom Studio agent).** `src/analytics/seatAgent.js` registers a `seat` agent beside Studio's lead, data, widget, page and planning agents. The lead delegates seat requests to it; it runs code, not a model loop: it posts the instruction to `POST /api/agent/chat`, shows the reply, hands any proposal to the Confirm bar above the report, and reports back with `complete_task`. Confirm uses the same endpoint as the Overview assistant.
 

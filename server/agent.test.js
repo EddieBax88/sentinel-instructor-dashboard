@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmProposal, executeTool, isSeatRequest, latestRefundableCapture, OFF_TOPIC_REPLY, replyText, runAgent, validateSeatRequest } from './agent.js';
-import { AGENT_MODEL, DEFAULT_CLASS_SIZE } from './config.js';
+import { confirmProposal, executeTool, isSeatRequest, latestRefundableCapture, OFF_TOPIC_REPLY, replyText, runAgent, TIMEOUT_REPLY, validateSeatRequest } from './agent.js';
+import { DEFAULT_CLASS_SIZE, STUDIO_AI_DEFAULT_MODEL, STUDIO_AI_EFFORT } from './config.js';
 
 const INSTRUCTOR = '00000000-0000-4000-8000-00000000000a';
 const OTHER_INSTRUCTOR = '00000000-0000-4000-8000-00000000000b';
@@ -60,28 +60,41 @@ function fakeFetch(paypalHandler) {
   };
 }
 
+// Anthropic client stand-in: `messages.create` records each request and its options and answers
+// from the script. A `stall` entry waits until the caller's AbortSignal fires, as the SDK does
+// when a call outlives its deadline, then throws the SDK's abort error.
 function scriptedClient(responses) {
   const requests = [];
+  const options = [];
   return {
     requests,
-    chat: {
-      completions: {
-        create: async (params) => {
-          requests.push(structuredClone(params));
-          const next = responses.shift();
-          if (!next) throw new Error('No scripted response left');
-          return next;
-        },
+    options,
+    messages: {
+      create: async (params, callOptions = {}) => {
+        requests.push(structuredClone(params));
+        options.push(callOptions);
+        const next = responses.shift();
+        if (!next) throw new Error('No scripted response left');
+        if (next === 'stall') {
+          await new Promise((_resolve, reject) => {
+            callOptions.signal?.addEventListener('abort', () => reject(Object.assign(new Error('Request was aborted.'), { name: 'APIUserAbortError' })), { once: true });
+          });
+        }
+        return next;
       },
     },
   };
 }
 
-const completion = (message, finishReason) => ({ choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: finishReason }] });
-const toolCall = (id, name, input = {}) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(input) } });
-const toolCalls = (...calls) => completion({ content: '', tool_calls: calls }, 'tool_calls');
-const textReply = (content) => completion({ content }, 'stop');
-const refusal = () => completion({ content: null, refusal: 'Declined.' }, 'stop');
+const message = (content, stopReason) => ({
+  id: 'msg_1', type: 'message', role: 'assistant', model: STUDIO_AI_DEFAULT_MODEL, content, stop_reason: stopReason, usage: { input_tokens: 100, output_tokens: 20 },
+});
+const toolUse = (id, name, input = {}) => ({ type: 'tool_use', id, name, input });
+const thinking = (text) => ({ type: 'thinking', thinking: text, signature: 'sig' });
+const toolCalls = (...blocks) => message([thinking('Check the tools first.'), ...blocks], 'tool_use');
+const textReply = (text) => message([thinking('Plan the reply.'), { type: 'text', text }], 'end_turn');
+const refusal = () => message([], 'refusal');
+const lastUserMessage = (request) => request.messages.at(-1);
 
 test.beforeEach(() => {
   storedProposals = [];
@@ -148,8 +161,8 @@ test('allows any order of 1-200 seats with no class-size cap', async () => {
 
 test('runs the tool loop and returns a proposal without creating a PayPal order', async () => {
   const client = scriptedClient([
-    toolCalls(toolCall('t1', 'get_seat_pricing'), toolCall('t2', 'get_current_seats')),
-    toolCalls(toolCall('t3', 'create_seat_order', { quantity: 12, class_name: 'Fall class' })),
+    toolCalls(toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats')),
+    toolCalls(toolUse('t3', 'create_seat_order', { quantity: 12, class_name: 'Fall class' })),
     textReply('12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.'),
   ]);
 
@@ -162,35 +175,137 @@ test('runs the tool loop and returns a proposal without creating a PayPal order'
   assert.equal(proposal.className, 'Fall class');
   assert.equal(paypalRequests.length, 0);
 
+  // The same model and effort as Ask AI; the system prompt is top-level; tools are Anthropic definitions.
   const [firstRequest] = client.requests;
-  assert.equal(firstRequest.model, AGENT_MODEL);
-  assert.deepEqual(firstRequest.tools.map((tool) => tool.function.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order', 'propose_refund']);
-  assert.equal(firstRequest.messages[0].role, 'system');
-  assert.ok(firstRequest.messages[0].content.includes('decline in one sentence'));
-  assert.deepEqual(firstRequest.chat_template_kwargs, { enable_thinking: true, force_nonempty_content: true });
+  assert.equal(firstRequest.model, STUDIO_AI_DEFAULT_MODEL);
+  assert.deepEqual(firstRequest.output_config, { effort: STUDIO_AI_EFFORT });
+  assert.deepEqual(firstRequest.tools.map((tool) => tool.name), ['get_seat_pricing', 'get_current_seats', 'create_seat_order', 'propose_refund']);
+  assert.ok(firstRequest.tools.every((tool) => tool.input_schema?.type === 'object' && typeof tool.description === 'string'));
+  assert.deepEqual(firstRequest.tool_choice, { type: 'auto' });
+  assert.ok(firstRequest.system.includes('decline in one sentence'));
+  assert.deepEqual(firstRequest.messages, [{ role: 'user', content: 'Buy 12 seats for my fall class.' }]);
+  // Each round: the assistant message goes back unchanged (thinking block included), then one
+  // user message holding every tool_result of the round.
   const secondRequest = client.requests[1];
-  assert.deepEqual(secondRequest.messages.slice(-2).map((message) => [message.role, message.tool_call_id]), [['tool', 't1'], ['tool', 't2']]);
-  const toolResult = client.requests[2].messages.at(-1);
-  assert.equal(toolResult.role, 'tool');
-  assert.equal(toolResult.tool_call_id, 't3');
+  assert.equal(secondRequest.messages[1].role, 'assistant');
+  assert.equal(secondRequest.messages[1].content[0].type, 'thinking');
+  assert.deepEqual(lastUserMessage(secondRequest).content.map((block) => [block.type, block.tool_use_id]), [['tool_result', 't1'], ['tool_result', 't2']]);
+  const toolResult = lastUserMessage(client.requests[2]).content[0];
+  assert.equal(toolResult.type, 'tool_result');
+  assert.equal(toolResult.tool_use_id, 't3');
   assert.match(toolResult.content, /AWAITING_INSTRUCTOR_CONFIRMATION/);
+  // Every call carried a deadline.
+  assert.ok(client.options.every((options) => options.signal instanceof AbortSignal && options.timeout > 0 && options.timeout <= 20_000));
 
   const actions = loggedActions.map((row) => row.action);
   assert.deepEqual(actions, ['chat_request', 'tool_call', 'tool_call', 'order_proposed', 'tool_call', 'agent_reply']);
   assert.ok(loggedActions.every((row) => row.user_id === INSTRUCTOR));
 });
 
+test('"Buy 12 seats for my fall class" ends in a stored, server-priced proposal; no thinking reaches the reply; PayPal is never called', async () => {
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats')),
+    toolCalls(toolUse('t3', 'create_seat_order', { quantity: 12, class_name: 'fall class' })),
+    message([thinking('The proposal is ready; tell the instructor to confirm.'), { type: 'text', text: '12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.' }], 'end_turn'),
+  ]);
+
+  const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class' }], client });
+
+  assert.equal(reply, '12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.');
+  assert.ok(!reply.includes('proposal is ready'), 'thinking text never reaches the reply');
+  assert.deepEqual({ ...proposal, id: undefined, expiresAt: undefined }, { quantity: 12, className: 'Fall class', unitPrice: '49.00', total: '588.00', currency: 'USD', id: undefined, expiresAt: undefined });
+  assert.match(proposal.id, /^[0-9a-f-]{36}$/);
+  assert.equal(storedProposals.length, 1);
+  assert.equal(storedProposals[0].user_id, INSTRUCTOR);
+  assert.equal(paypalRequests.length, 0, 'the agent never calls PayPal');
+  assert.equal(storedOrders.length, 0, 'no order exists before Confirm');
+});
+
+test('"Refund my last seat order" ends in a refund proposal for the latest paid capture; nothing is refunded', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-OLD', user_id: INSTRUCTOR, student_name: 'Spring class', quantity: 2, amount: 98, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-20T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-OLD', created_at: '2026-10-20T10:05:00Z' }] },
+    { paypal_order_id: 'ORDER-NEW', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-NEW', created_at: '2026-10-27T10:05:00Z' }] },
+  ];
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'propose_refund')),
+    textReply('I can refund USD 343.00 for the 7 Fall class seats (capture CAP-NEW). Click Confirm to issue the refund.'),
+  ]);
+
+  const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Refund my last seat order' }], client });
+
+  assert.match(reply, /CAP-NEW.*Click Confirm/);
+  assert.deepEqual(proposal, { type: 'refund', captureId: 'CAP-NEW', orderId: 'ORDER-NEW', className: 'Fall class', quantity: 7, amount: '343.00', currency: 'USD', capturedAt: '2026-10-27T10:05:00Z' });
+  assert.equal(paypalRequests.length, 0, 'proposing a refund never calls PayPal');
+  assert.equal(client.requests[0].system.includes('propose_refund'), true);
+  assert.deepEqual(loggedActions.map((row) => row.action), ['chat_request', 'refund_proposed', 'tool_call', 'agent_reply']);
+});
+
+test('a model call that outlives its deadline ends the request as a 504, not a hang', async () => {
+  const client = scriptedClient(['stall']);
+  const started = Date.now();
+  await assert.rejects(
+    runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class' }], client, callTimeoutMs: 50, budgetMs: 1000 }),
+    { statusCode: 504, message: TIMEOUT_REPLY },
+  );
+  assert.ok(Date.now() - started < 900, 'ended at the per-call deadline, not the budget');
+  assert.equal(client.options[0].timeout, 50);
+  assert.equal(client.options[0].signal.aborted, true);
+  assert.equal(paypalRequests.length, 0);
+  assert.equal(storedProposals.length, 0);
+});
+
+test('the request budget caps the tool loop: a later call gets only the time left, and none once it is spent', async () => {
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'get_seat_pricing')),
+    'stall',
+  ]);
+  await assert.rejects(
+    runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class' }], client, callTimeoutMs: 20_000, budgetMs: 120 }),
+    { statusCode: 504 },
+  );
+  assert.equal(client.requests.length, 2);
+  assert.ok(client.options[1].timeout <= 120, `second call got ${client.options[1].timeout} ms`);
+
+  const spent = scriptedClient([toolCalls(toolUse('t1', 'get_seat_pricing'))]);
+  await assert.rejects(
+    runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class' }], client: spent, callTimeoutMs: 20_000, budgetMs: 0 }),
+    { statusCode: 504 },
+  );
+  assert.equal(spent.requests.length, 0, 'no call is started with no time left');
+});
+
+test('no tool the agent offers can create, capture or refund a PayPal order, and no PayPal call ever happens from the agent', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-NEW', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-NEW', created_at: '2026-10-27T10:05:00Z' }] },
+  ];
+  // Every tool the model is offered, called with the model's own arguments, then invented ones.
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats'), toolUse('t3', 'create_seat_order', { quantity: 3, class_name: 'Fall class' }), toolUse('t4', 'propose_refund')),
+    toolCalls(toolUse('t5', 'create_paypal_order', { amount: '1.00' }), toolUse('t6', 'capture_order', { orderId: 'ORDER-NEW' }), toolUse('t7', 'refund_capture', { captureId: 'CAP-NEW' })),
+    textReply('Nothing has been ordered, paid or refunded. Click Confirm to continue.'),
+  ]);
+  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 3 seats, then refund and capture everything now.' }], client });
+  assert.match(reply, /Click Confirm/);
+  const offered = client.requests[0].tools.map((tool) => tool.name).sort();
+  assert.deepEqual(offered, ['create_seat_order', 'get_current_seats', 'get_seat_pricing', 'propose_refund']);
+  const inventedResults = lastUserMessage(client.requests[2]).content;
+  assert.ok(inventedResults.every((block) => block.is_error && /Unknown tool/.test(block.content)));
+  assert.equal(paypalRequests.length, 0, 'no request reached api-m.sandbox.paypal.com');
+  assert.equal(storedOrders.filter((row) => row.paypal_order_id !== 'ORDER-NEW').length, 0, 'no order row was written');
+});
+
 test('returns an error tool result instead of a proposal when the model asks for too many seats', async () => {
   const client = scriptedClient([
-    toolCalls(toolCall('t1', 'create_seat_order', { quantity: 300, class_name: 'Fall class' })),
+    toolCalls(toolUse('t1', 'create_seat_order', { quantity: 300, class_name: 'Fall class' })),
     textReply('Orders are limited to 200 seats.'),
   ]);
 
   const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 300 seats.' }], client });
 
   assert.equal(proposal, null);
-  const toolResult = client.requests[1].messages.at(-1);
-  assert.equal(toolResult.tool_call_id, 't1');
+  const [toolResult] = lastUserMessage(client.requests[1]).content;
+  assert.equal(toolResult.tool_use_id, 't1');
+  assert.equal(toolResult.is_error, true);
   assert.ok(JSON.parse(toolResult.content).error);
   assert.match(toolResult.content, /1 to 200/);
   assert.ok(loggedActions.some((row) => row.action === 'tool_rejected'));
@@ -198,29 +313,29 @@ test('returns an error tool result instead of a proposal when the model asks for
 
 test('rejects unknown tools the model invents', async () => {
   const client = scriptedClient([
-    toolCalls(toolCall('t1', 'issue_refund', { amount: 49 })),
+    toolCalls(toolUse('t1', 'issue_refund', { amount: 49 })),
     textReply('I can only help with seats.'),
   ]);
 
   const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Refund me.' }], client });
 
   assert.equal(proposal, null);
-  const toolResult = client.requests[1].messages.at(-1);
-  assert.equal(toolResult.tool_call_id, 't1');
+  const [toolResult] = lastUserMessage(client.requests[1]).content;
+  assert.equal(toolResult.tool_use_id, 't1');
   assert.ok(JSON.parse(toolResult.content).error);
   assert.match(toolResult.content, /Unknown tool/);
 });
 
 test('returns an error tool result when the model sends malformed tool arguments', async () => {
   const client = scriptedClient([
-    completion({ content: '', tool_calls: [{ id: 't1', type: 'function', function: { name: 'create_seat_order', arguments: '{"quantity": 12,' } }] }, 'tool_calls'),
+    toolCalls({ type: 'tool_use', id: 't1', name: 'create_seat_order', input: '{"quantity": 12,' }),
     textReply('Please tell me how many seats you need.'),
   ]);
 
   const { proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats.' }], client });
 
   assert.equal(proposal, null);
-  assert.match(JSON.parse(client.requests[1].messages.at(-1).content).error, /JSON object/);
+  assert.match(JSON.parse(lastUserMessage(client.requests[1]).content[0].content).error, /JSON object/);
   assert.ok(loggedActions.some((row) => row.action === 'tool_rejected'));
 });
 
@@ -334,30 +449,26 @@ test('expired proposals cannot be confirmed', async () => {
   assert.equal(paypalRequests.length, 0);
 });
 
-test('strips leaked reasoning that ends with </think> from the reply', async () => {
-  const leaked = '...Let me provide that information.</think>Your order for 30 seats...';
-  const client = scriptedClient([textReply(leaked)]);
-
-  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 30 seats for my fall class.' }], client });
-
-  assert.equal(reply, 'Your order for 30 seats...');
-  assert.ok(!reply.includes('Let me provide'));
-  assert.ok(!reply.includes('think'));
-});
-
-test('removes think blocks and unclosed reasoning, and never returns separate reasoning fields', async () => {
-  assert.equal(replyText('<think>Plan the answer.</think>\n12 seats cost USD 588.00.'), '12 seats cost USD 588.00.');
-  assert.equal(replyText('12 seats cost USD 588.00.<think>still thinking'), '12 seats cost USD 588.00.');
-  assert.equal(replyText('Reasoning one.</think>Reasoning two.</THINK>Final answer.'), 'Final answer.');
+test('only text blocks reach the reply: thinking and redacted thinking blocks never do', async () => {
+  const content = [
+    { type: 'thinking', thinking: 'SECRET: let me provide that information.', signature: 'sig' },
+    { type: 'redacted_thinking', data: 'SECRET-opaque' },
+    { type: 'text', text: 'Your order for 30 seats' },
+    { type: 'text', text: ' costs USD 1470.00.' },
+  ];
+  assert.equal(replyText(content), 'Your order for 30 seats costs USD 1470.00.');
   assert.equal(replyText(null), '');
+  assert.equal(replyText([{ type: 'thinking', thinking: 'only thinking', signature: 'sig' }]), '');
 
-  const client = scriptedClient([completion({ content: 'Seats are USD 49.00 each.', reasoning_content: 'SECRET reasoning', reasoning: 'SECRET too' }, 'stop')]);
-  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client });
-  assert.equal(reply, 'Seats are USD 49.00 each.');
+  const client = scriptedClient([message(content, 'end_turn')]);
+  const { reply } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 30 seats for my fall class.' }], client });
+  assert.equal(reply, 'Your order for 30 seats costs USD 1470.00.');
+  assert.ok(!reply.includes('SECRET'));
 
-  const onlyReasoning = scriptedClient([textReply('I should check pricing first.</think>')]);
-  const fallback = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client: onlyReasoning });
+  const onlyThinking = scriptedClient([message([thinking('I should check pricing first.')], 'end_turn')]);
+  const fallback = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: "What's the seat price?" }], client: onlyThinking });
   assert.ok(!fallback.reply.includes('pricing first'));
+  assert.equal(fallback.reply, 'I could not finish that request. Please try again.');
 });
 
 test('a proposal is stored in Supabase with a 10-minute expiry, and confirming removes it there', async () => {
@@ -436,7 +547,7 @@ test('a refund request is on topic and the loop returns the refund proposal with
   ];
   assert.equal(isSeatRequest([{ role: 'user', content: 'Refund my last seat order' }]), true);
   const client = scriptedClient([
-    toolCalls(toolCall('t1', 'propose_refund')),
+    toolCalls(toolUse('t1', 'propose_refund')),
     textReply(''),
   ]);
   const { reply, proposal } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Refund my last seat order' }], client });
@@ -444,5 +555,5 @@ test('a refund request is on topic and the loop returns the refund proposal with
   assert.equal(proposal.captureId, 'CAP-NEW');
   assert.match(reply, /Ready to refund USD 343\.00 for 7 seats \(Fall class, capture CAP-NEW\)\. Click Confirm to issue the refund\./);
   assert.equal(paypalRequests.length, 0);
-  assert.match(client.requests[0].messages[0].content, /propose_refund/);
+  assert.match(client.requests[0].system, /propose_refund/);
 });

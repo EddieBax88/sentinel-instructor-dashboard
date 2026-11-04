@@ -1,5 +1,5 @@
 import express, { Router } from 'express';
-import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS, STUDIO_AI_EFFORT, studioAiModel } from './config.js';
+import { AGENT_MODEL, AGENT_TEMPLATE_KWARGS, STUDIO_AI_EFFORT, STUDIO_AI_TURN_TIMEOUT_MS, studioAiModel } from './config.js';
 import { anthropicClient } from './anthropic.js';
 import { replyText } from './nvidia.js';
 import { authenticateSupabaseUser, getBearerToken } from './supabase.js';
@@ -28,9 +28,11 @@ const MAX_MESSAGES = 200;
 const MAX_TOOLS = 30;
 const MAX_OUTPUT_TOKENS = 16384;
 // A model turn can sit queued for a long time before it starts. Turns are streamed; one with no
-// content at all by this point is aborted and sent once more, and the second try runs to
-// completion. Once content is flowing a turn is never aborted.
+// content at all by this point is aborted and sent once more. Once content is flowing a turn is
+// not aborted for being slow, but every turn, first try and retry together, ends at the hard
+// deadline (STUDIO_AI_TURN_TIMEOUT_MS) as a 504.
 export const FIRST_CHUNK_TIMEOUT_MS = 10_000;
+export const TIMEOUT_MESSAGE = 'The analytics assistant took too long. Please try again.';
 const ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 const fail = (status, message) => Object.assign(new Error(message), { statusCode: status });
@@ -345,37 +347,51 @@ export function toStudioReply(message) {
   };
 }
 
-// One streamed Messages attempt. With a deadline, it is aborted if no content event has arrived
-// by then (message_start arrives at once, so it does not count).
-async function streamMessage(client, request, deadlineMs) {
+const timeoutError = () => fail(504, TIMEOUT_MESSAGE);
+
+// One streamed Messages attempt. With `firstContentMs`, it is aborted and reported as stalled if
+// no content event has arrived by then (message_start arrives at once, so it does not count).
+// `deadlineMs` is the hard limit on the whole attempt, content flowing or not: passing it ends
+// the turn as a 504. The same deadline goes to the SDK as its own request timeout.
+async function streamMessage(client, request, { firstContentMs, deadlineMs }) {
+  if (deadlineMs <= 0) throw timeoutError();
   const started = Date.now();
   const controller = new AbortController();
-  const timer = deadlineMs === undefined ? null : setTimeout(() => controller.abort(), deadlineMs);
+  let timedOut = false;
+  const firstTimer = firstContentMs === undefined ? null : setTimeout(() => controller.abort(), firstContentMs);
+  const hardTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, deadlineMs);
   let ttftMs = null;
   try {
-    const stream = client.messages.stream(request, { signal: controller.signal });
+    const stream = client.messages.stream(request, { signal: controller.signal, timeout: deadlineMs });
     for await (const event of stream) {
       if (ttftMs === null && (event.type === 'content_block_start' || event.type === 'content_block_delta')) {
         ttftMs = Date.now() - started;
-        clearTimeout(timer);
+        clearTimeout(firstTimer);
       }
     }
     const message = await stream.finalMessage();
     return { message, ms: Date.now() - started, ttftMs, stalled: false };
   } catch (error) {
+    if (timedOut || error?.name === 'APIConnectionTimeoutError') throw timeoutError();
     if (!controller.signal.aborted) throw error;
     return { ms: Date.now() - started, ttftMs: null, stalled: true };
   } finally {
-    clearTimeout(timer);
+    clearTimeout(firstTimer);
+    clearTimeout(hardTimer);
   }
 }
 
 // One Claude turn, retried once if no content arrives within the first-token timeout. Other
-// errors are thrown; the retry has no deadline.
-export async function completeAnthropicTurn(client, request, { firstChunkTimeoutMs = FIRST_CHUNK_TIMEOUT_MS } = {}) {
-  const first = await streamMessage(client, request, firstChunkTimeoutMs);
+// errors are thrown. The retry has no first-token timeout of its own, but it shares the turn's
+// hard deadline with the first try, so the turn ends within `turnTimeoutMs` either way.
+export async function completeAnthropicTurn(client, request, { firstChunkTimeoutMs = FIRST_CHUNK_TIMEOUT_MS, turnTimeoutMs = STUDIO_AI_TURN_TIMEOUT_MS } = {}) {
+  const started = Date.now();
+  const first = await streamMessage(client, request, { firstContentMs: firstChunkTimeoutMs, deadlineMs: turnTimeoutMs });
   if (!first.stalled) return { message: first.message, latencyMs: first.ms, ttftMs: first.ttftMs, retried: false };
-  const retry = await streamMessage(client, request);
+  const retry = await streamMessage(client, request, { deadlineMs: turnTimeoutMs - (Date.now() - started) });
   return {
     message: retry.message,
     latencyMs: first.ms + retry.ms,
@@ -405,7 +421,7 @@ export function describeAnthropicTurn(body, request, message, latencyMs) {
   };
 }
 
-export function createStudioAiRouter({ client = () => anthropicClient('the analytics assistant'), model, effort, firstChunkTimeoutMs } = {}) {
+export function createStudioAiRouter({ client = () => anthropicClient('the analytics assistant'), model, effort, firstChunkTimeoutMs, turnTimeoutMs } = {}) {
   const router = Router();
   // Studio's tool definitions and history are larger than the app-wide JSON limit.
   router.use(express.json({ limit: '2mb' }));
@@ -415,7 +431,7 @@ export function createStudioAiRouter({ client = () => anthropicClient('the analy
     try {
       await authenticateSupabaseUser(getBearerToken(request.get('authorization')));
       const claudeRequest = buildAnthropicRequest(request.body, { model: model ?? studioAiModel(), effort: effort ?? STUDIO_AI_EFFORT });
-      const { message, latencyMs, ttftMs, retried, firstAttemptMs, retryMs } = await completeAnthropicTurn(client(), claudeRequest, { firstChunkTimeoutMs });
+      const { message, latencyMs, ttftMs, retried, firstAttemptMs, retryMs } = await completeAnthropicTurn(client(), claudeRequest, { firstChunkTimeoutMs, turnTimeoutMs });
       if (process.env.STUDIO_AI_TIMING === '1') {
         const row = { ...describeAnthropicTurn(request.body, claudeRequest, message, latencyMs), ttftMs, ...(retried && { retried, firstAttemptMs, retryMs }) };
         console.log(`[studio-ai] ${JSON.stringify(row)}`);

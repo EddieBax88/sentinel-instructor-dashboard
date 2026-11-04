@@ -1,7 +1,7 @@
 // Headless browser test of the Seat agent in Ask AI, against the real Express app (server/app.js):
 // /api/agent/chat runs server/agent.js and the confirm endpoint runs server/paypal.js. Only outside
-// services are faked: Supabase, NVIDIA (the seat assistant's model), PayPal Sandbox, and the
-// Ask AI lead's model turns (scripted in the browser; a live lead needs ANTHROPIC_API_KEY).
+// services are faked: Supabase, the Anthropic Messages API (the seat assistant's model), PayPal
+// Sandbox, and the Ask AI lead's model turns (scripted in the browser).
 //
 //   npm run test:browser       (needs Playwright's Chromium once: npx playwright install chromium)
 
@@ -26,11 +26,13 @@ const freePort = () => new Promise((resolve) => {
   });
 });
 
-const calls = { auth: [], nvidia: [], proposalsSaved: [], proposalsClaimed: 0, ordersSaved: [], paypalOrders: [] };
+const calls = { auth: [], claude: [], proposalsSaved: [], proposalsClaimed: 0, ordersSaved: [], paypalOrders: [] };
 let proposals = [];
-const nvidiaReplies = [
-  { choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'nv-1', type: 'function', function: { name: 'create_seat_order', arguments: JSON.stringify({ quantity: 12, class_name: 'Fall class' }) } }] } }] },
-  { choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Ready to order 12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.' } }] },
+// The seat assistant's model (Claude, Messages API), scripted: a create_seat_order call, then a reply.
+const claudeMessage = (content, stopReason) => ({ id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content, stop_reason: stopReason, usage: { input_tokens: 100, output_tokens: 20 } });
+const claudeReplies = [
+  claudeMessage([{ type: 'tool_use', id: 'toolu_1', name: 'create_seat_order', input: { quantity: 12, class_name: 'Fall class' } }], 'tool_use'),
+  claudeMessage([{ type: 'text', text: 'Ready to order 12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.' }], 'end_turn'),
 ];
 
 // Outside services for the server side. Anything else is a test failure.
@@ -67,10 +69,10 @@ async function fakeFetch(url, options = {}) {
       return Response.json([{ paypal_order_id: 'ORDER-OLD', student_name: 'Fall class', quantity: 2, amount: 98, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-30T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-OLD', created_at: '2026-10-30T10:05:00Z' }] }]);
     }
   }
-  if (hostname === 'integrate.api.nvidia.com' && pathname === '/v1/chat/completions') {
-    calls.nvidia.push(JSON.parse(options.body));
-    const reply = nvidiaReplies.shift();
-    if (!reply) throw new Error('No scripted NVIDIA reply left');
+  if (hostname === 'api.anthropic.com' && pathname === '/v1/messages') {
+    calls.claude.push(JSON.parse(options.body));
+    const reply = claudeReplies.shift();
+    if (!reply) throw new Error('No scripted Claude reply left');
     return Response.json(reply);
   }
   if (hostname === 'api-m.sandbox.paypal.com') {
@@ -90,7 +92,7 @@ test('the lead hands a seat request to the Seat agent, which calls /api/agent/ch
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     PAYPAL_CLIENT_ID: 'sandbox_test_client',
     PAYPAL_SECRET: 'sandbox_test_secret',
-    NVIDIA_API_KEY: 'test-nvidia-key',
+    ANTHROPIC_API_KEY: 'test-anthropic-key',
   });
   delete process.env.PAYPAL_BASE_URL;
   globalThis.fetch = fakeFetch;
@@ -150,8 +152,9 @@ test('the lead hands a seat request to the Seat agent, which calls /api/agent/ch
     // The real /api/agent/chat ran: signed-in token checked, the lead's instruction reached the
     // seat assistant's model, and the proposal was stored for this instructor.
     assert.ok(calls.auth.includes('Bearer instructor-token'));
-    assert.equal(calls.nvidia.length, 2);
-    assert.deepEqual(calls.nvidia[0].messages.filter((message) => message.role === 'user').map((message) => message.content), ['Prepare an order for 12 seats for the Fall class.']);
+    assert.equal(calls.claude.length, 2);
+    assert.equal(calls.claude[0].model, 'claude-sonnet-5-5');
+    assert.deepEqual(calls.claude[0].messages.filter((message) => message.role === 'user').map((message) => message.content), ['Prepare an order for 12 seats for the Fall class.']);
     assert.equal(calls.proposalsSaved.length, 1);
     assert.deepEqual([calls.proposalsSaved[0].user_id, calls.proposalsSaved[0].quantity, calls.proposalsSaved[0].class_name], [INSTRUCTOR, 12, 'Fall class']);
     assert.equal(calls.paypalOrders.length, 0, 'nothing is ordered before Confirm');
