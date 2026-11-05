@@ -163,6 +163,42 @@ export async function executeTool(name, input, { userId }) {
   throw Object.assign(new Error(`Unknown tool: ${name}`), { statusCode: 400 });
 }
 
+// The "AI trace" under each seat-assistant reply: what the server ran for each tool call. Only the
+// tool name, the model's parsed arguments and a short server-made summary go in. The summary is
+// built from fixed fields of the tool result, so the system prompt, thinking, keys, user IDs,
+// emails and tokens never reach it.
+export function traceResult(name, outcome) {
+  const { result, proposal } = outcome;
+  if (name === 'get_seat_pricing') {
+    return { unitPrice: `${result.currency} ${result.unitPrice}`, maxSeatsPerOrder: result.maxSeatsPerOrder, priceFrom: 'server' };
+  }
+  if (name === 'get_current_seats') {
+    return { classSize: result.defaultClassSize, seatsSold: result.seatsSold, seatsPending: result.seatsPending, seatsRemaining: result.seatsRemaining, yourOrders: result.yourOrders.length };
+  }
+  if (name === 'create_seat_order') {
+    return {
+      seats: proposal.quantity,
+      class: proposal.className,
+      unitPrice: `${proposal.currency} ${proposal.unitPrice}`,
+      total: `${proposal.currency} ${proposal.total}`,
+      priceFrom: 'server',
+      status: 'Awaiting your Confirm. Nothing ordered or charged.',
+    };
+  }
+  if (name === 'propose_refund') {
+    if (!proposal) return { refundable: false, reason: result.reason };
+    return {
+      captureId: proposal.captureId,
+      seats: proposal.quantity,
+      amount: `${proposal.currency} ${proposal.amount}`,
+      status: 'Awaiting your Confirm. Nothing refunded.',
+    };
+  }
+  return {};
+}
+
+const traceArguments = (input) => (input && typeof input === 'object' && !Array.isArray(input) ? structuredClone(input) : null);
+
 function validateMessages(messages) {
   const valid = Array.isArray(messages)
     && messages.length > 0
@@ -230,6 +266,7 @@ export async function runAgent({ userId, messages, client = anthropicClient('the
   let proposal = null;
   let reply = '';
   let usedTools = false;
+  const trace = [];
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const response = await createMessage(client, {
       model: studioAiModel(),
@@ -262,9 +299,11 @@ export async function runAgent({ userId, messages, client = anthropicClient('the
         input = parseToolInput(toolUse.input);
         const outcome = await executeTool(name, input, { userId });
         if (outcome.proposal) proposal = outcome.proposal;
+        trace.push({ tool: name, arguments: traceArguments(input), ok: true, result: traceResult(name, outcome) });
         await logAgentAction({ userId, action: 'tool_call', details: { tool: name, input } });
         results.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify(outcome.result) });
       } catch (error) {
+        trace.push({ tool: name, arguments: traceArguments(input), ok: false, result: { error: error.message } });
         await logAgentAction({ userId, action: 'tool_rejected', details: { tool: name, input, reason: error.message } });
         results.push({ type: 'tool_result', tool_use_id: toolUse.id, content: JSON.stringify({ error: error.message }), is_error: true });
       }
@@ -274,7 +313,7 @@ export async function runAgent({ userId, messages, client = anthropicClient('the
 
   if (!usedTools && !onTopic) {
     await logAgentAction({ userId, action: 'off_topic_blocked', details: { message: history.at(-1).content.slice(0, 500) } });
-    return { reply: OFF_TOPIC_REPLY, proposal: null };
+    return { reply: OFF_TOPIC_REPLY, proposal: null, trace };
   }
 
   reply ||= proposal?.type === 'refund'
@@ -283,7 +322,7 @@ export async function runAgent({ userId, messages, client = anthropicClient('the
       ? `Ready to order ${proposal.quantity} seats at ${proposal.currency} ${proposal.unitPrice} each, ${proposal.currency} ${proposal.total} total. Click Confirm to continue to PayPal.`
       : 'I could not finish that request. Please try again.';
   await logAgentAction({ userId, action: 'agent_reply', details: { proposalId: proposal?.id ?? proposal?.captureId ?? null } });
-  return { reply, proposal };
+  return { reply, proposal, trace };
 }
 
 // Proposals live in Supabase (seat_proposals), so any server instance can confirm one. Claiming

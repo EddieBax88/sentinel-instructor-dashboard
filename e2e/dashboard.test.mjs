@@ -6,6 +6,8 @@
 // 2. Agent-driven refund: the refund chip, the seat assistant's proposal, the Confirm gate, the
 //    sandbox refund call, the ledger showing the order REFUNDED with its seats back, then the
 //    demo reset behind its confirm dialog, deleting only this instructor's rows.
+// 3. AI trace: "Buy 12 seats for my fall class" shows a collapsed "AI trace" under the reply that
+//    expands to each tool call, its arguments and the server's result. Confirm is never clicked.
 // Screenshots go to e2e/shots (gitignored).
 //
 //   npm run test:browser
@@ -41,7 +43,7 @@ const ORDERS = [
   { paypal_order_id: 'ORDER-12', user_id: INSTRUCTOR, student_name: 'fall class', quantity: 12, amount: 588, currency: 'USD', status: 'REFUNDED', created_at: '2026-10-29T18:00:00Z', paypal_payments: [{ capture_id: 'CAP-12', created_at: '2026-10-29T18:05:00Z' }] },
 ];
 
-const calls = { claude: [], refunds: [], revokes: [], actions: [], deletes: [] };
+const calls = { claude: [], refunds: [], revokes: [], actions: [], deletes: [], proposals: [] };
 // The seat assistant's model (Claude, Messages API), scripted: a refund request becomes a
 // propose_refund call, then a reply.
 const claudeMessage = (content, stopReason) => ({ id: 'msg_e2e', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content, stop_reason: stopReason, usage: { input_tokens: 100, output_tokens: 20 } });
@@ -67,6 +69,10 @@ async function fakeFetch(url, options = {}) {
     }
     if (pathname === '/rest/v1/paypal_orders') return Response.json(ORDERS);
     if (pathname === '/rest/v1/paypal_webhook_events') return Response.json([]);
+    if (pathname === '/rest/v1/seat_proposals' && options.method === 'POST') {
+      calls.proposals.push(JSON.parse(options.body));
+      return new Response(null, { status: 201 });
+    }
     if (pathname === '/rest/v1/agent_actions') {
       calls.actions.push(JSON.parse(options.body));
       return new Response(null, { status: 201 });
@@ -335,6 +341,57 @@ test('the refund chip leads to a proposal, a Confirm gate, one sandbox refund, a
     await page.getByText('No seat orders yet.').waitFor({ timeout: 30_000 });
     await page.waitForFunction(() => /SEATS REMAINING\s*30\s*\/\s*30/.test(document.querySelector('.seat-counter')?.innerText ?? ''), null, { timeout: 30_000 });
     assert.equal(await page.locator('.seat-pill').count(), 0);
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await stop();
+  }
+});
+
+test('the AI trace under a seat-assistant reply is collapsed, then expands to the tool calls, arguments and server result', { timeout: 180_000 }, async () => {
+  claudeReplies.splice(0, claudeReplies.length,
+    claudeMessage([{ type: 'thinking', thinking: 'E2E-THINKING never shown', signature: 'sig' }, { type: 'tool_use', id: 'toolu_p', name: 'get_seat_pricing', input: {} }, { type: 'tool_use', id: 'toolu_s', name: 'get_current_seats', input: {} }], 'tool_use'),
+    claudeMessage([{ type: 'tool_use', id: 'toolu_o', name: 'create_seat_order', input: { quantity: 12, class_name: 'fall class' } }], 'tool_use'),
+    claudeMessage([{ type: 'text', text: 'Your order is ready: 12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.' }], 'end_turn'),
+  );
+  const { page, origin, pageErrors, stop } = await startDashboard();
+  try {
+    await page.goto(`${origin}/`);
+    const chips = page.getByRole('group', { name: 'Example seat requests' }).getByRole('button');
+    await chips.first().waitFor({ timeout: 60_000 });
+    await chips.filter({ hasText: 'Buy 12 seats for my fall class' }).click();
+    const [proposalsBefore, refundsBefore] = [calls.proposals.length, calls.refunds.length];
+    await page.getByRole('button', { name: 'Send' }).click();
+    await page.getByRole('group', { name: 'Seat order awaiting confirmation' }).waitFor({ timeout: 60_000 });
+
+    const reply = page.locator('.agent-message.assistant').last();
+    const toggle = reply.getByRole('button', { name: /AI trace/ });
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'false', 'collapsed by default');
+    assert.match(await toggle.innerText(), /AI trace · 3 steps/i);
+    assert.equal(await reply.getByRole('list', { name: 'AI trace' }).count(), 0);
+
+    await toggle.click();
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    const steps = reply.getByRole('list', { name: 'AI trace' }).locator('li');
+    assert.equal(await steps.count(), 3);
+    assert.deepEqual(await steps.locator('.agent-trace-tool').allInnerTexts(), ['1. get_seat_pricing', '2. get_current_seats', '3. create_seat_order']);
+    const order = await steps.nth(2).innerText();
+    assert.match(order, /"quantity": 12/);
+    assert.match(order, /"class_name": "fall class"/);
+    assert.match(order, /"total": "USD 588\.00"/);
+    assert.match(order, /"priceFrom": "server"/);
+    const traceText = await reply.innerText();
+    assert.ok(!traceText.includes('E2E-THINKING') && !traceText.includes(INSTRUCTOR), 'no thinking or user ID in the trace');
+    // Expanded, the chat log grows so all three steps show without scrolling inside it.
+    const logSize = await page.locator('.agent-log').evaluate((log) => [log.scrollHeight, log.clientHeight, getComputedStyle(log).maxHeight]);
+    assert.ok(logSize[0] <= logSize[1] + 1, `the expanded trace is not clipped: ${logSize}`);
+    for (const theme of ['Black', 'Industrial', 'Light']) {
+      await page.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name: theme }).click();
+      await page.locator('.agent-panel').screenshot({ path: `${SHOTS}ai-trace-${theme}.png` });
+    }
+    await page.screenshot({ path: `${SHOTS}ai-trace.png`, fullPage: true });
+
+    assert.equal(calls.proposals.length, proposalsBefore + 1);
+    assert.equal(calls.refunds.length, refundsBefore, 'Confirm was not clicked; nothing reached PayPal');
     assert.deepEqual(pageErrors, []);
   } finally {
     await stop();
