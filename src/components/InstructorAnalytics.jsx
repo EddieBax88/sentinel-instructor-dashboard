@@ -12,6 +12,9 @@ import { studioHarnessConfig } from '../analytics/studioAgents.js';
 import { buildStudioData } from '../analytics/studioData.js';
 import { instructorStudioTheme } from '../analytics/theme.js';
 import { studioWidgets } from '../analytics/widgets.jsx';
+import { applyStudioLicense } from '../analytics/studioLicense.js';
+
+applyStudioLicense(import.meta.env);
 
 if (import.meta.env.DEV) enableStudioDevValidations();
 

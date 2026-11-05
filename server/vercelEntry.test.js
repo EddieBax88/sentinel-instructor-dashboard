@@ -78,3 +78,83 @@ test('through the Vercel entry, the PayPal webhook is verified with the raw body
     }
   }
 });
+
+test('GET /api/keepalive does one head-only Supabase read with the service role and returns only { ok: true }', async () => {
+  const names = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, { SUPABASE_URL: 'https://example.supabase.co', SUPABASE_ANON_KEY: 'test-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key' });
+  const realFetch = globalThis.fetch;
+  const supabaseCalls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const { hostname } = new URL(url);
+    if (hostname === '127.0.0.1') return realFetch(url, options);
+    supabaseCalls.push({ url, options });
+    return new Response(null, { status: 200, headers: { 'Content-Range': '0-0/7' } });
+  };
+  try {
+    await serve(async (base) => {
+      for (const path of ['/api?__route=keepalive', '/api/keepalive']) {
+        const response = await realFetch(`${base}${path}`);
+        assert.equal(response.status, 200, path);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.equal(response.headers.get('content-range'), null);
+        const text = await response.text();
+        assert.deepEqual(JSON.parse(text), { ok: true });
+        assert.ok(!text.includes('7') && !text.includes('test-service-role-key'));
+      }
+    });
+    assert.equal(supabaseCalls.length, 2);
+    for (const { url, options } of supabaseCalls) {
+      assert.equal(url, 'https://example.supabase.co/rest/v1/paypal_orders?select=paypal_order_id&limit=1');
+      assert.equal(options.method, 'HEAD');
+      assert.equal(options.headers.apikey, 'test-service-role-key');
+      assert.equal(options.headers.Prefer, 'count=exact');
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+});
+
+test('GET /api/keepalive failure answers 502 { ok: false } with no Supabase detail', async () => {
+  const names = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const realFetch = globalThis.fetch;
+  try {
+    // Not configured at all.
+    for (const name of names) delete process.env[name];
+    await serve(async (base) => {
+      const response = await realFetch(`${base}/api/keepalive`);
+      assert.equal(response.status, 502);
+      assert.equal(await response.text(), JSON.stringify({ ok: false }));
+    });
+    // Configured, Supabase errors.
+    Object.assign(process.env, { SUPABASE_URL: 'https://example.supabase.co', SUPABASE_ANON_KEY: 'test-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key' });
+    globalThis.fetch = async (url, options = {}) => {
+      if (new URL(url).hostname === '127.0.0.1') return realFetch(url, options);
+      return Response.json({ message: 'secret internal detail' }, { status: 500 });
+    };
+    await serve(async (base) => {
+      const response = await realFetch(`${base}/api/keepalive`);
+      assert.equal(response.status, 502);
+      assert.equal(await response.text(), JSON.stringify({ ok: false }));
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+});
+
+test('vercel.json schedules /api/keepalive every 6 hours, and the /api rewrite still covers it', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  assert.deepEqual(config.crons, [{ path: '/api/keepalive', schedule: '0 */6 * * *' }]);
+  assert.equal(config.rewrites[0].source, '/api/:route*');
+  assert.equal(restoreApiUrl('/api?__route=keepalive'), '/api/keepalive');
+});
