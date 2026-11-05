@@ -68,6 +68,8 @@ cp .env.example .env    # fill in PayPal Sandbox and Supabase values
 npm run dev
 ```
 
+Optional: set `VITE_AG_STUDIO_LICENSE_KEY` in `.env` (or Vercel) to apply an AG Studio licence key; without it Instructor analytics shows AG Studio's trial watermark.
+
 Open `http://localhost:3000`. Without PayPal credentials the dashboard loads but checkout is disabled. Without `ANTHROPIC_API_KEY` the seat assistant and Ask AI are disabled. The API refuses non-sandbox PayPal hosts. Local webhooks need a public HTTPS tunnel to `/api/paypal/webhook`.
 
 Production build: `npm run build` then `npm start`. On Vercel the API runs as one Function (`api/index.js`, `vercel.json`); set `NODEJS_HELPERS=0` so the webhook sees the raw body.

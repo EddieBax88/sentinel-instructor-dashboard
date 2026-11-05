@@ -6,7 +6,7 @@ import { isAnthropicConfigured } from './anthropic.js';
 import analyticsRouter from './analytics.js';
 import studioAiRouter from './studioAi.js';
 import { assertSandbox, captureSandboxOrder, createSandboxOrder, isPaypalConfigured, refundSandboxCapture } from './paypal.js';
-import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, logAgentAction, publicSupabaseConfiguration, resetDemoDataForUser } from './supabase.js';
+import { authenticateSupabaseUser, getBearerToken, isSupabaseConfigured, listPaypalOrdersForUser, listWebhookEventsForUser, logAgentAction, pingSupabase, publicSupabaseConfiguration, resetDemoDataForUser } from './supabase.js';
 import webhookRouter, { publicWebhookEvent } from './webhook.js';
 import { dashboardFromOrders } from './seatUnlock.js';
 
@@ -127,6 +127,17 @@ app.post('/api/demo/reset', async (request, response) => {
 });
 
 app.use('/api/paypal/webhook', webhookRouter);
+// Called by the Vercel cron in vercel.json every 6 hours so the free-plan Supabase project sees
+// database activity and does not pause. The answer carries no data, not even the failure reason.
+app.get('/api/keepalive', async (_request, response) => {
+  response.set('Cache-Control', 'no-store');
+  try {
+    await pingSupabase();
+    response.json({ ok: true });
+  } catch {
+    response.status(502).json({ ok: false });
+  }
+});
 // Vercel sets VERCEL_GIT_COMMIT_SHA on every deploy, so the live health check names the commit it runs.
 app.get('/api/health', (_request, response) => response.json({ status: 'ok', environment: 'sandbox-only', commit: process.env.VERCEL_GIT_COMMIT_SHA || undefined }));
 

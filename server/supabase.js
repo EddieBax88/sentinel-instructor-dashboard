@@ -365,3 +365,16 @@ export async function resetDemoDataForUser(userId) {
   }
   return deleted;
 }
+
+// Keep-alive for the free-plan project: one head-only count on paypal_orders with the service
+// role. HEAD returns no rows, only a Content-Range header, and the caller never sees even that.
+export async function pingSupabase() {
+  const { baseUrl, serviceRoleKey } = supabaseConfiguration();
+  const response = await fetch(`${baseUrl}/rest/v1/paypal_orders?select=paypal_order_id&limit=1`, {
+    method: 'HEAD',
+    headers: serviceHeaders(serviceRoleKey, { Prefer: 'count=exact' }),
+  });
+  if (!response.ok) {
+    throw Object.assign(new Error(`Supabase keep-alive failed (${response.status}).`), { statusCode: 502 });
+  }
+}
