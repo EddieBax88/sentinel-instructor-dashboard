@@ -1,4 +1,4 @@
-import { Bot, Check, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import PromptChips from './PromptChips.jsx';
 import RefundConfirmBar, { refundIssuedMessage } from './RefundConfirmBar.jsx';
@@ -17,6 +17,32 @@ async function readResponse(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'The request could not be completed.');
   return payload;
+}
+
+// "AI trace": the tool calls the model made for this reply, as the server ran them. Collapsed by
+// default; each step shows the tool name, the model's arguments and the server's result.
+function AiTrace({ trace }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="agent-trace">
+      <button type="button" className="agent-trace-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <ChevronRight size={12} aria-hidden="true" />AI trace · {trace.length} {trace.length === 1 ? 'step' : 'steps'}
+      </button>
+      {open && (
+        <ol className="agent-trace-steps" aria-label="AI trace">
+          {trace.map((step, index) => (
+            <li key={index} className={step.ok ? 'agent-trace-step' : 'agent-trace-step error'}>
+              <code className="agent-trace-tool">{index + 1}. {step.tool}</code>
+              <span className="agent-trace-label">Arguments</span>
+              <pre>{JSON.stringify(step.arguments ?? null, null, 2)}</pre>
+              <span className="agent-trace-label">Server result</span>
+              <pre>{JSON.stringify(step.result ?? null, null, 2)}</pre>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 // Judge prompts. Each one works end to end: the purchase chips go through the seat agent to a
@@ -53,9 +79,9 @@ export default function AgentPanel({ authHeaders, availability, refundAvailable 
       const result = await readResponse(await fetch('/api/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ messages: nextMessages.slice(-20) }),
+        body: JSON.stringify({ messages: nextMessages.slice(-20).map(({ role, content }) => ({ role, content })) }),
       }));
-      setMessages([...nextMessages, { role: 'assistant', content: result.reply }]);
+      setMessages([...nextMessages, { role: 'assistant', content: result.reply, trace: Array.isArray(result.trace) ? result.trace : [] }]);
       setProposal(result.proposal);
     } catch (requestError) {
       setError(requestError.message);
@@ -90,7 +116,12 @@ export default function AgentPanel({ authHeaders, availability, refundAvailable 
       <div className="agent-heading"><Bot size={16} /><strong>Seat assistant</strong><span>Ask in plain English, e.g. "Buy 12 seats for my fall class."</span></div>
       {messages.length > 0 && (
         <ol className="agent-log">
-          {messages.map((message, index) => <li key={index} className={`agent-message ${message.role}`}>{message.role === 'assistant' ? formatReply(message.content) : message.content}</li>)}
+          {messages.map((message, index) => (
+            <li key={index} className={`agent-message ${message.role}`}>
+              {message.role === 'assistant' ? formatReply(message.content) : message.content}
+              {message.trace?.length > 0 && <AiTrace trace={message.trace} />}
+            </li>
+          ))}
         </ol>
       )}
       {proposal?.type === 'refund' && (

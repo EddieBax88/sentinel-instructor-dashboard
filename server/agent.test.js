@@ -557,3 +557,75 @@ test('a refund request is on topic and the loop returns the refund proposal with
   assert.equal(paypalRequests.length, 0);
   assert.match(client.requests[0].system, /propose_refund/);
 });
+
+test('the AI trace lists every tool call in order with the parsed arguments and a server-made result', async () => {
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats')),
+    toolCalls(toolUse('t3', 'create_seat_order', { quantity: 12, class_name: 'fall class' })),
+    textReply('12 seats at USD 49.00 each, USD 588.00 total. Click Confirm to continue to PayPal.'),
+  ]);
+
+  const { reply, proposal, trace } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 12 seats for my fall class' }], client });
+
+  assert.match(reply, /Click Confirm/);
+  assert.equal(proposal.quantity, 12, 'the existing response fields are unchanged');
+  assert.deepEqual(trace.map((step) => step.tool), ['get_seat_pricing', 'get_current_seats', 'create_seat_order']);
+  assert.deepEqual(trace.map((step) => step.arguments), [{}, {}, { quantity: 12, class_name: 'fall class' }]);
+  assert.ok(trace.every((step) => step.ok));
+  assert.deepEqual(trace[0].result, { unitPrice: 'USD 49.00', maxSeatsPerOrder: 200, priceFrom: 'server' });
+  assert.deepEqual(trace[2].result, {
+    seats: 12, class: 'Fall class', unitPrice: 'USD 49.00', total: 'USD 588.00', priceFrom: 'server',
+    status: 'Awaiting your Confirm. Nothing ordered or charged.',
+  });
+});
+
+test('the AI trace for a refund shows capture, seats and amount; a rejected call is listed as an error', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-NEW', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 7, amount: 343, currency: 'USD', status: 'COMPLETED', created_at: '2026-10-27T10:00:00Z', paypal_payments: [{ capture_id: 'CAP-NEW', created_at: '2026-10-27T10:05:00Z' }] },
+  ];
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'create_seat_order', { quantity: 300, class_name: 'Fall class' }), toolUse('t2', 'propose_refund')),
+    textReply('Click Confirm to issue the refund.'),
+  ]);
+
+  const { trace } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 300 seats, or refund my last seat order' }], client });
+
+  assert.deepEqual(trace.map((step) => [step.tool, step.ok]), [['create_seat_order', false], ['propose_refund', true]]);
+  assert.deepEqual(trace[0].arguments, { quantity: 300, class_name: 'Fall class' });
+  assert.match(trace[0].result.error, /1 to 200/);
+  assert.deepEqual(trace[1].result, { captureId: 'CAP-NEW', seats: 7, amount: 'USD 343.00', status: 'Awaiting your Confirm. Nothing refunded.' });
+});
+
+test('the AI trace leaks no system prompt, thinking, keys, user IDs, emails or tokens', async () => {
+  storedOrders = [
+    { paypal_order_id: 'ORDER-A', user_id: INSTRUCTOR, student_name: 'Fall class', quantity: 3, amount: 147, currency: 'USD', status: 'PENDING', created_at: '2026-10-28T10:00:00Z', paypal_payments: [] },
+  ];
+  const client = scriptedClient([
+    toolCalls(toolUse('t1', 'get_seat_pricing'), toolUse('t2', 'get_current_seats'), toolUse('t3', 'create_seat_order', { quantity: 3, class_name: 'Spring class' })),
+    toolCalls({ type: 'tool_use', id: 't4', name: 'create_seat_order', input: '{"quantity": 3,' }),
+    message([thinking('SECRET-THINKING instructor@example.com'), { type: 'text', text: 'Click Confirm to continue to PayPal.' }], 'end_turn'),
+  ]);
+
+  const { trace } = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Buy 3 seats for the spring class' }], client });
+  const text = JSON.stringify(trace);
+
+  assert.equal(trace.length, 4);
+  assert.equal(trace[3].arguments, null, 'malformed arguments are not echoed');
+  assert.ok(!text.includes('seat-purchasing assistant'), 'no system prompt');
+  assert.ok(!text.includes(client.requests[0].system.slice(0, 40)), 'no system prompt');
+  assert.ok(!/Check the tools first|SECRET-THINKING|signature|"sig"/.test(text), 'no thinking');
+  assert.ok(!text.includes(INSTRUCTOR) && !/user_?id/i.test(text), 'no user IDs');
+  assert.ok(!/@/.test(text), 'no emails');
+  for (const name of environmentNames) {
+    if (process.env[name]) assert.ok(!text.includes(process.env[name]), `no ${name}`);
+  }
+  assert.ok(!/test-anon-key|test-service-role-key|sandbox_test_secret|sandbox_test_client|token|bearer|sk-/i.test(text), 'no keys or tokens');
+  assert.ok(!/ORDER-A/.test(text), 'order rows are counted, not listed');
+  assert.ok(!text.includes(storedProposals[0].id), 'no proposal ID');
+});
+
+test('an off-topic turn returns an empty AI trace', async () => {
+  const client = scriptedClient([textReply('Here is a poem.')]);
+  const result = await runAgent({ userId: INSTRUCTOR, messages: [{ role: 'user', content: 'Write me a poem about Texas.' }], client });
+  assert.deepEqual(result, { reply: OFF_TOPIC_REPLY, proposal: null, trace: [] });
+});

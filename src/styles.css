@@ -133,6 +133,18 @@ footer { margin-top: 22px; padding-top: 13px; color: var(--muted-foreground); bo
 .agent-message { max-width: 80%; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
 .agent-message.user { align-self: flex-end; color: var(--primary-foreground); background: var(--primary-strong); }
 .agent-message.assistant { align-self: flex-start; color: var(--foreground); background: var(--muted); }
+.agent-log:has(.agent-trace-toggle[aria-expanded="true"]) { max-height: none; }
+.agent-trace { margin-top: 6px; white-space: normal; }
+.agent-trace-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; color: var(--muted-foreground); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; cursor: pointer; }
+.agent-trace-toggle svg { transition: transform .15s; }
+.agent-trace-toggle[aria-expanded="true"] { color: var(--foreground); border-color: var(--primary); }
+.agent-trace-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.agent-trace-steps { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.agent-trace-step { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: var(--radius-sm); }
+.agent-trace-step.error { border-left-color: var(--destructive); }
+.agent-trace-tool { color: var(--foreground); font-size: 11px; font-weight: 700; }
+.agent-trace-label { color: var(--muted-foreground); font-size: 9px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; }
+.agent-trace-step pre { margin: 0; padding: 5px 7px; overflow-x: auto; color: var(--foreground); background: var(--muted); border-radius: 4px; font-size: 10px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
 .agent-proposal { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 11px; padding: 10px 11px; background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 11px; }
 .agent-proposal div { display: flex; gap: 8px; }
 .agent-cancel { min-height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--foreground); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; cursor: pointer; }
