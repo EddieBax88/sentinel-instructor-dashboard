@@ -6,7 +6,7 @@ An instructor sells seats in an exam-prep class, confirms every purchase before 
 
 **Hosted demo:** https://sentinel-hackathon-demo-mu.vercel.app (PayPal Sandbox only; no real money). Create an account on the Overview page, then buy a seat, or ask the seat assistant to prepare a multi-seat order.
 
-**Demo video:** https://youtu.be/fEyD0xD6B3U
+**Demo video:** https://youtu.be/wVLaccqweAg
 
 ## Architecture in 60 seconds
 
