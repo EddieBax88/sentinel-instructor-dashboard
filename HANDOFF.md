@@ -7,7 +7,7 @@ Due Nov 12, 2026, 12:00pm PT. Judging Dec 1–15.
 - Repo: `EddieBax88/sentinel-instructor-dashboard` (public). Branch: `ccr-1d301b90-3tuzmz`. Vercel Production tracks this branch and auto-deploys every push. `GET /api/health` now reports the deployed commit (`VERCEL_GIT_COMMIT_SHA`), and every push below was checked that way.
 - **PR #1 is merged** (Nov 4, merge commit `94e634d`, a merge commit, not a squash, on Eddie's instruction). `main` now carries the full branch; `LICENSE` (MIT) is at its root and the GitHub API reports the repo license as `MIT`. The branch was kept: Vercel Production still deploys from it. Any further work goes on the branch and needs a new PR into `main`.
 - **PR #3 is merged** (Nov 4, merge commit `b969b2b`): the seat assistant on Claude Sonnet 5.5 with hard timeouts. The branch stays as Vercel's production source.
-- **Demo video: recorded and public** (https://youtu.be/fEyD0xD6B3U); linked in `SUBMISSION.md` and `README.md`. Re-recorded Nov 4: the re-take fixes the loading flash (the Overview no longer shows "Add ANTHROPIC_API_KEY to .env" or "No seat orders yet." before data loads) and the "Oops" line (the Ask AI lead no longer narrates an unnecessary lookup before delegating a seat request), both fixed in `87b8efa`.
+- **Demo video: recorded and public** (https://youtu.be/wVLaccqweAg); linked in `SUBMISSION.md` and `README.md`. Re-recorded Nov 4: the re-take fixes the loading flash (the Overview no longer shows "Add ANTHROPIC_API_KEY to .env" or "No seat orders yet." before data loads) and the "Oops" line (the Ask AI lead no longer narrates an unnecessary lookup before delegating a seat request), both fixed in `87b8efa`. **Re-recorded again Nov 6** (the link above is the Nov 6 take): it shows the AI trace under the seat assistant's reply (PR #7), the licensed AG Studio with no watermark, and Studio building a chart.
 - **Devpost draft: complete, video included.** `SUBMISSION.md` holds every field; `DEMO-SCRIPT.md` is the click path.
 - **cloudflared.deb and the old names stay in git history by decision** (Nov 4): no history rewrite, no force-push.
 - Commits this session, oldest first (each pushed, deployed READY, health `ok` with that commit):
@@ -187,7 +187,7 @@ Tools are sent without `strict: true`. Live on Nov 3, the chosen model (Sonnet 5
 
 ## Remaining (in order)
 
-Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); live refunds tested (Nov 3); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); seat assistant on Claude, checked live, PR #3 merged (Nov 4); owner decisions 1 to 3 (agent-actions migration applied, `PAYMENT.CAPTURE.REFUNDED` events arriving, live refunds); demo video recorded and public (https://youtu.be/fEyD0xD6B3U). `NVIDIA_API_KEY` stays in Vercel by decision.
+Done: the Anthropic key and the live probe on Claude (Nov 3; Sonnet 5.5, effort `low`); live refunds tested (Nov 3); PR #1 merged into `main` with LICENSE confirmed MIT (Nov 4); README judge checklist, DEMO-SCRIPT timing, secret scan (Nov 4); seat assistant on Claude, checked live, PR #3 merged (Nov 4); owner decisions 1 to 3 (agent-actions migration applied, `PAYMENT.CAPTURE.REFUNDED` events arriving, live refunds); demo video recorded and public (https://youtu.be/wVLaccqweAg). `NVIDIA_API_KEY` stays in Vercel by decision.
 
 Remaining for Eddie:
 
